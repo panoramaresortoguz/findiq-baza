@@ -227,7 +227,7 @@
     });
     return { in: byIn, out: byOut };
   }
-  const QUICK_EXPENSE_CATS = ["Kirayə", "Nəqliyyat", "Sənəd/pasport", "Təmizlik", "İnventar", "Əmək haqqı"];
+  const QUICK_EXPENSE_CATS = ["Xidmət", "Yemək", "Digər xərc"];
 
   function normalizeHeader(h) {
     return String(h || "").trim().replace(/İ/g, "i").toLowerCase()
@@ -277,6 +277,7 @@
     fuelMonth: todayISO().slice(0, 7),
     masterImportPending: null,
     masterImportFileName: "",
+    expenseDate: todayISO(),
   };
 
   function todayISO() {
@@ -1229,7 +1230,10 @@
         <div class="section-title">Yeni xərc</div>
         <div style="margin-bottom:10px;">${QUICK_EXPENSE_CATS.map((c) => `<span class="chip ${expenseCategory === c ? "active" : ""}" data-cat="${esc(c)}">${esc(c)}</span>`).join("")}</div>
         <div class="field-row"><div class="field"><label>Xərc maddəsi</label><input id="eCategory" value="${esc(expenseCategory)}" placeholder="məs. Yeşik xərci" /></div></div>
-        <div class="field-row"><div class="field"><label>Məbləğ</label><input id="eSum" type="number" inputmode="decimal" placeholder="0" /></div></div>
+        <div class="field-row">
+          <div class="field"><label>Məbləğ</label><input id="eSum" type="number" inputmode="decimal" placeholder="0" /></div>
+          <div class="field"><label>Tarix</label><input id="eDate" type="date" value="${esc(state.expenseDate)}" /></div>
+        </div>
         <div class="field-row"><div class="field"><label>Qeyd</label><input id="eNote" placeholder="məcburi deyil" /></div></div>
         <button class="btn red" id="eSubmit">${ICONS.plus} Xərci qeyd et</button>
       </div>
@@ -1424,9 +1428,7 @@
   // ---------- Truck ----------
   let fuelType = FUEL_TYPES[0];
   function renderTruckTab() {
-    const dayPurchases = state.purchases.filter((p) => p.date === state.truckDate);
-    const purchasedBySupplier = {};
-    dayPurchases.forEach((p) => { purchasedBySupplier[p.supplier] = (purchasedBySupplier[p.supplier] || 0) + p.kg; });
+    const driverOptionsForTruck = state.drivers.map((d) => `<option value="${esc(d.name)}"></option>`).join("");
 
     const validEntries = state.truckEntries.filter((e) => e.supplier.trim() && e.kg);
     const totalKg = validEntries.reduce((s, e) => s + Number(e.kg || 0), 0);
@@ -1434,44 +1436,26 @@
 
     const dayLoads = state.truckLoads.filter((t) => t.date === state.truckDate);
 
-    let entriesHtml = state.truckEntries.map((e, idx) => {
-      const purchasedKg = e.supplier.trim() ? purchasedBySupplier[e.supplier.trim()] : undefined;
-      const diff = purchasedKg !== undefined && e.kg ? Number(e.kg) - purchasedKg : null;
-      return `
+    let entriesHtml = state.truckEntries.map((e, idx) => `
         <div class="card-box" data-truck-row="${e.id}">
           <div class="field-row">
-            <div class="field"><label>Kim təhvil verib</label><input class="truckSupplier" data-row="${e.id}" value="${esc(e.supplier)}" placeholder="Ad" /></div>
+            <div class="field"><label>Kim apardı</label><input class="truckSupplier" list="truckDriverNamesList" data-row="${e.id}" value="${esc(e.supplier)}" placeholder="Ad" /></div>
             ${state.truckEntries.length > 1 ? `<button class="del-btn" style="align-self:flex-end;padding:10px 4px;" data-del-truck-row="${e.id}">${ICONS.trash}</button>` : ""}
           </div>
           <div class="field-row">
             <div class="field"><label>Kq (çəkidə)</label><input class="truckKg" data-row="${e.id}" type="number" inputmode="decimal" value="${esc(e.kg)}" placeholder="0" /></div>
             <div class="field"><label>Kisə sayı</label><input class="truckBags" data-row="${e.id}" type="number" inputmode="decimal" value="${esc(e.bags)}" placeholder="0" /></div>
           </div>
-          ${
-            purchasedKg !== undefined
-              ? `<div style="font-size:12.5px;margin-top:2px;">
-                  <span style="color:var(--muted);">Alışda qeyd olunub: ${fmt(purchasedKg)} kq</span>
-                  ${diff !== null ? `<span style="margin-left:8px;font-weight:700;color:${Math.abs(diff) > 0.5 ? "var(--red)" : "var(--green)"};">${diff > 0 ? "+" : ""}${fmt(diff)} kq fərq</span>` : ""}
-                </div>`
-              : e.supplier.trim()
-              ? `<div style="font-size:12.5px;color:var(--red);margin-top:2px;">Bu adda alış qeydi tapılmadı</div>`
-              : ""
-          }
         </div>
-      `;
-    }).join("");
+      `).join("");
+    entriesHtml = `<datalist id="truckDriverNamesList">${driverOptionsForTruck}</datalist>` + entriesHtml;
 
     let loadsHtml = sortByTs(dayLoads).reverse().map((t) => {
       const loadKg = t.entries.reduce((s, e) => s + e.kg, 0);
       const loadBags = t.entries.reduce((s, e) => s + e.bags, 0);
-      const rows = t.entries.map((e) => {
-        const purchasedKg = purchasedBySupplier[e.supplier];
-        const diff = purchasedKg !== undefined ? e.kg - purchasedKg : null;
-        return `<div style="font-size:13px;color:#2A2618;padding:4px 0;border-top:1px solid var(--line-soft);">
+      const rows = t.entries.map((e) => `<div style="font-size:13px;color:#2A2618;padding:4px 0;border-top:1px solid var(--line-soft);">
           ${esc(e.supplier)} — ${fmt(e.kg)} kq${e.bags ? " (" + e.bags + " kisə)" : ""}
-          ${diff !== null && Math.abs(diff) > 0.001 ? `<span style="color:${Math.abs(diff) > 0.5 ? "var(--red)" : "var(--green)"};font-weight:700;"> (${diff > 0 ? "+" : ""}${fmt(diff)} kq fərq)</span>` : ""}
-        </div>`;
-      }).join("");
+        </div>`).join("");
       return `<div class="card-box">
         <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
           <div style="font-weight:700;color:var(--ink);">${esc(t.driver)}</div>
@@ -1870,11 +1854,10 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     rows.push([]);
 
     rows.push(["Maşın"]);
-    rows.push(["Sürücü", "Kim təhvil verib", "Kq", "Kisə", "Alışda qeyd olunan kq", "Fərq"]);
+    rows.push(["Sürücü", "Kim apardı", "Kq", "Kisə"]);
     r.truckDay.forEach((t) => {
       t.entries.forEach((e) => {
-        const purchasedKg = r.purchases.filter((p) => p.supplier === e.supplier).reduce((s, p) => s + p.kg, 0);
-        rows.push([t.driver, e.supplier, e.kg, e.bags, purchasedKg || "", purchasedKg ? Number((e.kg - purchasedKg).toFixed(2)) : ""]);
+        rows.push([t.driver, e.supplier, e.kg, e.bags]);
       });
     });
     rows.push([]);
@@ -1919,11 +1902,10 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     const truckRows = [];
     r.truckDay.forEach((t) => {
       t.entries.forEach((e) => {
-        const purchasedKg = r.purchases.filter((p) => p.supplier === e.supplier).reduce((s, p) => s + p.kg, 0);
-        truckRows.push({ Tarix: t.date, Sürücü: t.driver, "Kim təhvil verib": e.supplier, "Maşında kq": e.kg, "Kisə sayı": e.bags, "Alışda qeyd olunan kq": purchasedKg || "", "Fərq (kq)": purchasedKg ? Number((e.kg - purchasedKg).toFixed(2)) : "" });
+        truckRows.push({ Tarix: t.date, Sürücü: t.driver, "Kim apardı": e.supplier, "Maşında kq": e.kg, "Kisə sayı": e.bags });
       });
     });
-    if (truckRows.length) truckRows.push({ Tarix: "", Sürücü: "CƏMİ", "Kim təhvil verib": "", "Maşında kq": r.truckTotalKg, "Kisə sayı": r.truckTotalBags, "Alışda qeyd olunan kq": "", "Fərq (kq)": "" });
+    if (truckRows.length) truckRows.push({ Tarix: "", Sürücü: "CƏMİ", "Kim apardı": "", "Maşında kq": r.truckTotalKg, "Kisə sayı": r.truckTotalBags });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(truckRows.length ? truckRows : [{ Tarix: reportDate, Sürücü: "qeyd yoxdur" }]), "Maşın");
 
     const driverAdvRows = r.driverAdvancesDay.map((a) => ({ Tarix: a.date, Sürücü: a.driver, Məbləğ: a.sum, Qeyd: a.note || "" }));
@@ -1969,8 +1951,7 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     const truckRowsAll = [];
     state.truckLoads.forEach((t) => {
       t.entries.forEach((e) => {
-        const purchasedKg = state.purchases.filter((p) => p.date === t.date && p.supplier === e.supplier).reduce((s, p) => s + p.kg, 0);
-        truckRowsAll.push({ Tarix: t.date, Sürücü: t.driver, "Kim təhvil verib": e.supplier, "Maşında kq": e.kg, "Kisə sayı": e.bags, "Alışda qeyd olunan kq": purchasedKg || "", "Fərq (kq)": purchasedKg ? Number((e.kg - purchasedKg).toFixed(2)) : "" });
+        truckRowsAll.push({ Tarix: t.date, Sürücü: t.driver, "Kim apardı": e.supplier, "Maşında kq": e.kg, "Kisə sayı": e.bags });
       });
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(truckRowsAll.length ? truckRowsAll : [{ Tarix: "", Sürücü: "qeyd yoxdur" }]), "Maşın");
@@ -2069,13 +2050,16 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     document.querySelectorAll("[data-cat]").forEach((chip) => {
       chip.onclick = () => { expenseCategory = chip.dataset.cat; renderTabContent(); };
     });
+    document.getElementById("eDate").onchange = (e) => { state.expenseDate = e.target.value; };
     document.getElementById("eSubmit").onclick = async () => {
       const category = document.getElementById("eCategory").value.trim();
       const sum = Number(document.getElementById("eSum").value);
       if (!category || !sum) return;
       const note = document.getElementById("eNote").value;
+      const date = document.getElementById("eDate").value || todayISO();
       expenseCategory = "";
-      await addExpense({ category, sum, note });
+      state.expenseDate = date;
+      await addExpense({ category, sum, note, date });
     };
     document.querySelectorAll("[data-del-expense]").forEach((btn) => {
       btn.onclick = () => deleteExpense(btn.dataset.delExpense);
