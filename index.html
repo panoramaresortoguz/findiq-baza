@@ -269,6 +269,11 @@
     const d = new Date(ts);
     return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
   }
+  // Sorts a collection by its real creation time (ts), oldest first — Firestore's own
+  // return order is not guaranteed to match the order things were actually entered.
+  function sortByTs(arr) {
+    return [...arr].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  }
   function fmt(n) {
     const num = Number(n) || 0;
     return num.toLocaleString("az-AZ", { maximumFractionDigits: 2 });
@@ -389,7 +394,7 @@
     const date = p.date || todayISO();
     const time = p.time || nowTime();
     const cashRef = await logCash(date, "out", p.sum, "Alış: " + p.supplier);
-    const entry = { ...p, date, time, cashLogId: cashRef ? cashRef.id : null };
+    const entry = { ...p, date, time, cashLogId: cashRef ? cashRef.id : null, ts: Date.now() };
     await addDoc("purchases", entry);
   }
   async function deletePurchase(id) {
@@ -402,7 +407,7 @@
     const date = s.date || todayISO();
     const time = s.time || nowTime();
     const cashRef = await logCash(date, "in", s.sum, "Satış: " + s.buyer);
-    const entry = { ...s, date, time, cashLogId: cashRef ? cashRef.id : null };
+    const entry = { ...s, date, time, cashLogId: cashRef ? cashRef.id : null, ts: Date.now() };
     await addDoc("sales", entry);
   }
   async function deleteSale(id) {
@@ -711,7 +716,7 @@
       if (btn) btn.textContent = `Yüklənir… (${i + 1}/${rows.length})`;
       const r = rows[i];
       const cashRef = await logCash(r.date, "in", r.sum, "Satış: " + r.buyer);
-      await addDoc("sales", { date: r.date, time: r.time, buyer: r.buyer, kg: r.kg, type: r.type, sum: r.sum, note: r.note, cashLogId: cashRef ? cashRef.id : null });
+      await addDoc("sales", { date: r.date, time: r.time, buyer: r.buyer, kg: r.kg, type: r.type, sum: r.sum, note: r.note, cashLogId: cashRef ? cashRef.id : null, ts: Date.now() });
     }
     state.salesImportPending = [];
     state.salesImportSkipped = 0;
@@ -723,7 +728,7 @@
   async function addExpense(e) {
     const date = e.date || todayISO();
     const cashRef = await logCash(date, "out", e.sum, e.category);
-    const entry = { ...e, date, cashLogId: cashRef ? cashRef.id : null };
+    const entry = { ...e, date, cashLogId: cashRef ? cashRef.id : null, ts: Date.now() };
     await addDoc("expenses", entry);
   }
   async function deleteExpense(id) {
@@ -740,7 +745,7 @@
     } else {
       cashRef = await logCash(date, "in", d.sum, "Borc alındı: " + d.person);
     }
-    const entry = { paid: false, ...d, date, cashLogId: cashRef ? cashRef.id : null };
+    const entry = { paid: false, ...d, date, cashLogId: cashRef ? cashRef.id : null, ts: Date.now() };
     await addDoc("debts", entry);
   }
   async function toggleDebtPaid(id) {
@@ -775,7 +780,7 @@
   }
 
   async function addAttendance(a) {
-    await addDoc("attendance", a);
+    await addDoc("attendance", { ts: Date.now(), ...a });
   }
   async function removeAttendance(id) {
     await deleteDoc("attendance", id);
@@ -791,7 +796,7 @@
 
   async function addWorker(name) {
     if (state.workers.some((w) => w.name.toLowerCase() === name.toLowerCase())) return;
-    await addDoc("workers", { name });
+    await addDoc("workers", { name, ts: Date.now() });
   }
   async function removeWorker(id) {
     await deleteDoc("workers", id);
@@ -803,7 +808,7 @@
   }
 
   async function addTruckLoad(t) {
-    await addDoc("truckLoads", t);
+    await addDoc("truckLoads", { ts: Date.now(), ...t });
   }
   async function deleteTruckLoad(id) {
     await deleteDoc("truckLoads", id);
@@ -812,13 +817,13 @@
   // ---------- Fuel (Yanacaq / Traktoristlər) ----------
   async function addTractorist(name) {
     if (state.tractorists.some((t) => t.name.toLowerCase() === name.toLowerCase())) return;
-    await addDoc("tractorists", { name });
+    await addDoc("tractorists", { name, ts: Date.now() });
   }
   async function removeTractorist(id) {
     await deleteDoc("tractorists", id);
   }
   async function addFuelLog(f) {
-    await addDoc("fuelLog", { date: todayISO(), time: nowTime(), ...f });
+    await addDoc("fuelLog", { date: todayISO(), time: nowTime(), ...f, ts: Date.now() });
   }
   async function deleteFuelLog(id) {
     await deleteDoc("fuelLog", id);
@@ -827,7 +832,7 @@
   // ---------- Drivers (Sürücülər) ----------
   async function addDriver(name) {
     if (state.drivers.some((d) => d.name.toLowerCase() === name.toLowerCase())) return;
-    await addDoc("drivers", { name });
+    await addDoc("drivers", { name, ts: Date.now() });
   }
   async function removeDriver(id) {
     await deleteDoc("drivers", id);
@@ -836,7 +841,7 @@
   async function addDriverAdvance(a) {
     const date = a.date || todayISO();
     const cashRef = await logCash(date, "out", a.sum, "Sürücüyə avans: " + a.driver);
-    await addDoc("driverAdvances", { date, driver: a.driver, sum: a.sum, note: a.note || "", cashLogId: cashRef ? cashRef.id : null });
+    await addDoc("driverAdvances", { date, driver: a.driver, sum: a.sum, note: a.note || "", cashLogId: cashRef ? cashRef.id : null, ts: Date.now() });
   }
   async function deleteDriverAdvance(id) {
     const a = state.driverAdvances.find((x) => x.id === id);
@@ -845,7 +850,7 @@
   }
 
   async function addDriverPurchase(p) {
-    await addDoc("driverPurchases", { date: todayISO(), time: nowTime(), paid: false, ...p });
+    await addDoc("driverPurchases", { date: todayISO(), time: nowTime(), paid: false, ...p, ts: Date.now() });
   }
   async function toggleDriverPurchasePaid(id) {
     const p = state.driverPurchases.find((x) => x.id === id);
@@ -1041,7 +1046,7 @@
           state.cashLog.length === 0
             ? '<div class="empty">Hələlik boşdur</div>'
             : `<div class="history-scroll">
-                ${[...state.cashLog].sort((a, b) => (a.ts || 0) - (b.ts || 0)).reverse().map((c) => `
+                ${sortByTs(state.cashLog).reverse().map((c) => `
                   <div class="list-row">
                     <div><div class="title">${esc(c.note || (c.type === "in" ? "Mədaxil" : "Çıxarış"))}</div><div class="meta">${esc(c.date)}${c.ts ? " · " + fmtTime(c.ts) : ""}</div></div>
                     <div style="display:flex;align-items:center;gap:10px;">
@@ -1089,7 +1094,7 @@
         ${
           state.purchases.length === 0
             ? '<div class="empty">Hələlik boşdur</div>'
-            : [...state.purchases].reverse().map((p) => `
+            : sortByTs(state.purchases).reverse().map((p) => `
               <div class="list-row">
                 <div>
                   <div class="title">${esc(p.supplier)} — ${fmt(p.kg)} kq · ${esc(p.type || "")}</div>
@@ -1151,7 +1156,7 @@
         ${
           state.sales.length === 0
             ? '<div class="empty">Hələlik boşdur</div>'
-            : [...state.sales].reverse().map((s) => `
+            : sortByTs(state.sales).reverse().map((s) => `
               <div class="list-row">
                 <div>
                   <div class="title">${esc(s.buyer)} — ${fmt(s.kg)} kq · ${esc(s.type || "")}</div>
@@ -1186,7 +1191,7 @@
         ${
           state.expenses.length === 0
             ? '<div class="empty">Hələlik boşdur</div>'
-            : [...state.expenses].reverse().map((e) => `
+            : sortByTs(state.expenses).reverse().map((e) => `
               <div class="list-row">
                 <div><div class="title">${esc(e.category)}</div><div class="meta">${esc(e.date)}${e.note ? " · " + esc(e.note) : ""}</div></div>
                 <div style="display:flex;align-items:center;gap:10px;">
@@ -1252,7 +1257,7 @@
         ${
           filtered.length === 0
             ? '<div class="empty">Nəticə yoxdur</div>'
-            : [...filtered].reverse().map((d) => `
+            : sortByTs(filtered).reverse().map((d) => `
               <div class="list-row" style="opacity:${d.paid ? 0.45 : 1};">
                 <div>
                   <div class="title" style="${d.paid ? "text-decoration:line-through;" : ""}">${esc(d.person)} ${d.direction === "gave" ? "(bizə borcludur)" : "(biz borcluyuq)"}</div>
@@ -1376,7 +1381,7 @@
       `;
     }).join("");
 
-    let loadsHtml = dayLoads.map((t) => {
+    let loadsHtml = sortByTs(dayLoads).reverse().map((t) => {
       const loadKg = t.entries.reduce((s, e) => s + e.kg, 0);
       const loadBags = t.entries.reduce((s, e) => s + e.bags, 0);
       const rows = t.entries.map((e) => {
@@ -1468,7 +1473,7 @@
           ${
             dayFuel.length === 0
               ? ""
-              : [...dayFuel].reverse().map((f) => `
+              : sortByTs(dayFuel).reverse().map((f) => `
                 <div class="list-row">
                   <div><div class="title">${esc(f.tractorist)} — ${fmt(f.liters)} litr (${esc(f.type || "")})</div><div class="meta">${esc(f.date)}${f.time ? " · " + esc(f.time) : ""}${f.note ? " · " + esc(f.note) : ""}</div></div>
                   <button class="del-btn" data-del-fuel="${f.id}">${ICONS.trash}</button>
@@ -1586,7 +1591,7 @@
         ${
           advDay.length === 0
             ? '<div class="empty">Hələlik boşdur</div>'
-            : [...advDay].reverse().map((a) => `
+            : sortByTs(advDay).reverse().map((a) => `
               <div class="list-row">
                 <div><div class="title">${esc(a.driver)}</div><div class="meta">${esc(a.date)}${a.note ? " · " + esc(a.note) : ""}</div></div>
                 <div style="display:flex;align-items:center;gap:10px;">
@@ -1602,7 +1607,7 @@
         ${
           purchDay.length === 0
             ? '<div class="empty">Hələlik boşdur</div>'
-            : [...purchDay].reverse().map((p) => `
+            : sortByTs(purchDay).reverse().map((p) => `
               <div class="list-row">
                 <div>
                   <div class="title">${esc(p.driver)}${p.seller ? " ← " + esc(p.seller) : ""} — ${fmt(p.kg)} kq${p.bags ? " (" + p.bags + " kisə)" : ""} · ${esc(p.type || "")}</div>
