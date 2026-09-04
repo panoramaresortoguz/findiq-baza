@@ -93,6 +93,10 @@
   .list-row .right { font-size: 15px; font-weight: 700; flex-shrink: 0; }
   .list-row .right.green { color: var(--green); }
   .list-row .right.red { color: var(--red); }
+  .history-scroll {
+    max-height: 320px; overflow-y: auto; border: 1px solid var(--line-soft); border-radius: 10px; padding: 0 10px;
+  }
+  .history-scroll .list-row:last-child { border-bottom: none; }
   .del-btn { background: none; border: none; color: var(--red); opacity: 0.5; cursor: pointer; padding: 4px; }
   .empty { color: var(--muted); font-size: 13.5px; }
   .chip { border: 1.5px solid var(--line); background: var(--white); color: var(--ink-soft); border-radius: 20px; padding: 6px 12px; font-size: 12.5px; cursor: pointer; margin: 3px; }
@@ -254,6 +258,11 @@
     const d = new Date();
     return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
   }
+  function fmtTime(ts) {
+    if (!ts) return "";
+    const d = new Date(ts);
+    return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+  }
   function fmt(n) {
     const num = Number(n) || 0;
     return num.toLocaleString("az-AZ", { maximumFractionDigits: 2 });
@@ -352,18 +361,24 @@
     }
   }
 
+  // Creates a cashLog entry stamped with a real creation time (ts) so history keeps the true order
+  // in which actions actually happened, regardless of how Firestore returns the documents.
+  async function logCash(date, type, sum, note, extra) {
+    return await addDoc("cashLog", { date, type, sum, note, ts: Date.now(), ...(extra || {}) });
+  }
+
   // Deletes the exact cashLog entry that was created together with a record (clean history).
   // Falls back to a compensating entry only for old records saved before this linking existed.
   async function removeLinkedCash(record, fallbackType, fallbackNote) {
     if (record && record.cashLogId) {
       await deleteDoc("cashLog", record.cashLogId);
     } else if (record) {
-      await addDoc("cashLog", { date: todayISO(), type: fallbackType, sum: record.sum, note: fallbackNote });
+      await logCash(todayISO(), fallbackType, record.sum, fallbackNote);
     }
   }
 
   async function addPurchase(p) {
-    const cashRef = await addDoc("cashLog", { date: todayISO(), type: "out", sum: p.sum, note: "Alış: " + p.supplier });
+    const cashRef = await logCash(todayISO(), "out", p.sum, "Alış: " + p.supplier);
     const entry = { date: todayISO(), time: nowTime(), ...p, cashLogId: cashRef ? cashRef.id : null };
     await addDoc("purchases", entry);
   }
@@ -374,7 +389,7 @@
   }
 
   async function addSale(s) {
-    const cashRef = await addDoc("cashLog", { date: todayISO(), type: "in", sum: s.sum, note: "Satış: " + s.buyer });
+    const cashRef = await logCash(todayISO(), "in", s.sum, "Satış: " + s.buyer);
     const entry = { date: todayISO(), time: nowTime(), ...s, cashLogId: cashRef ? cashRef.id : null };
     await addDoc("sales", entry);
   }
@@ -456,7 +471,7 @@
     for (let i = 0; i < rows.length; i++) {
       if (btn) btn.textContent = `Yüklənir… (${i + 1}/${rows.length})`;
       const r = rows[i];
-      const cashRef = await addDoc("cashLog", { date: r.date, type: "in", sum: r.sum, note: "Satış: " + r.buyer });
+      const cashRef = await logCash(r.date, "in", r.sum, "Satış: " + r.buyer);
       await addDoc("sales", { date: r.date, time: r.time, buyer: r.buyer, kg: r.kg, type: r.type, sum: r.sum, note: r.note, cashLogId: cashRef ? cashRef.id : null });
     }
     state.salesImportPending = [];
@@ -467,7 +482,7 @@
   }
 
   async function addExpense(e) {
-    const cashRef = await addDoc("cashLog", { date: todayISO(), type: "out", sum: e.sum, note: e.category });
+    const cashRef = await logCash(todayISO(), "out", e.sum, e.category);
     const entry = { date: todayISO(), ...e, cashLogId: cashRef ? cashRef.id : null };
     await addDoc("expenses", entry);
   }
@@ -480,9 +495,9 @@
   async function addDebt(d) {
     let cashRef;
     if (d.direction === "gave") {
-      cashRef = await addDoc("cashLog", { date: todayISO(), type: "out", sum: d.sum, note: "Borc: " + d.person });
+      cashRef = await logCash(todayISO(), "out", d.sum, "Borc: " + d.person);
     } else {
-      cashRef = await addDoc("cashLog", { date: todayISO(), type: "in", sum: d.sum, note: "Borc alındı: " + d.person });
+      cashRef = await logCash(todayISO(), "in", d.sum, "Borc alındı: " + d.person);
     }
     const entry = { date: todayISO(), paid: false, ...d, cashLogId: cashRef ? cashRef.id : null };
     await addDoc("debts", entry);
@@ -494,7 +509,7 @@
       // Marking as paid: money actually moves — reflect it in the cash register
       const type = d.direction === "gave" ? "in" : "out";
       const note = "Borc qaytarıldı: " + d.person;
-      const cashRef = await addDoc("cashLog", { date: todayISO(), type, sum: d.sum, note });
+      const cashRef = await logCash(todayISO(), type, d.sum, note);
       await updateDoc("debts", id, { paid: true, repayCashLogId: cashRef ? cashRef.id : null });
     } else {
       // Undo: remove the repayment's cash effect
@@ -512,7 +527,7 @@
   }
 
   async function addCashLog(c) {
-    await addDoc("cashLog", { date: todayISO(), manual: true, ...c });
+    await logCash(todayISO(), c.type, c.sum, c.note, { manual: true });
   }
   async function deleteCashLog(id) {
     await deleteDoc("cashLog", id);
@@ -563,7 +578,7 @@
   }
 
   async function addDriverAdvance(a) {
-    const cashRef = await addDoc("cashLog", { date: todayISO(), type: "out", sum: a.sum, note: "Sürücüyə avans: " + a.driver });
+    const cashRef = await logCash(todayISO(), "out", a.sum, "Sürücüyə avans: " + a.driver);
     await addDoc("driverAdvances", { date: todayISO(), driver: a.driver, sum: a.sum, note: a.note || "", cashLogId: cashRef ? cashRef.id : null });
   }
   async function deleteDriverAdvance(id) {
@@ -604,9 +619,9 @@
   async function settleDriver(driver, date, remaining) {
     let cashRef = null;
     if (remaining > 0) {
-      cashRef = await addDoc("cashLog", { date: todayISO(), type: "in", sum: remaining, note: "Sürücü qaytardı: " + driver });
+      cashRef = await logCash(todayISO(), "in", remaining, "Sürücü qaytardı: " + driver);
     } else if (remaining < 0) {
-      cashRef = await addDoc("cashLog", { date: todayISO(), type: "out", sum: Math.abs(remaining), note: "Sürücüyə ödənildi: " + driver });
+      cashRef = await logCash(todayISO(), "out", Math.abs(remaining), "Sürücüyə ödənildi: " + driver);
     }
     await addDoc("driverSettlements", { date, driver, sum: Math.abs(remaining), direction: remaining >= 0 ? "return" : "reimburse", cashLogId: cashRef ? cashRef.id : null });
   }
@@ -768,14 +783,16 @@
         ${
           state.cashLog.length === 0
             ? '<div class="empty">Hələlik boşdur</div>'
-            : [...state.cashLog].reverse().map((c) => `
-              <div class="list-row">
-                <div><div class="title">${esc(c.note || (c.type === "in" ? "Mədaxil" : "Çıxarış"))}</div><div class="meta">${esc(c.date)}</div></div>
-                <div style="display:flex;align-items:center;gap:10px;">
-                  <div class="right ${c.type === "in" ? "green" : "red"}">${c.type === "in" ? "+" : "−"}${fmt(c.sum)}</div>
-                  ${c.manual ? `<button class="del-btn" data-del-cash="${c.id}">${ICONS.trash}</button>` : ""}
-                </div>
-              </div>`).join("")
+            : `<div class="history-scroll">
+                ${[...state.cashLog].sort((a, b) => (a.ts || 0) - (b.ts || 0)).reverse().map((c) => `
+                  <div class="list-row">
+                    <div><div class="title">${esc(c.note || (c.type === "in" ? "Mədaxil" : "Çıxarış"))}</div><div class="meta">${esc(c.date)}${c.ts ? " · " + fmtTime(c.ts) : ""}</div></div>
+                    <div style="display:flex;align-items:center;gap:10px;">
+                      <div class="right ${c.type === "in" ? "green" : "red"}">${c.type === "in" ? "+" : "−"}${fmt(c.sum)}</div>
+                      ${c.manual ? `<button class="del-btn" data-del-cash="${c.id}">${ICONS.trash}</button>` : ""}
+                    </div>
+                  </div>`).join("")}
+              </div>`
         }
       </div>
     `;
@@ -1345,10 +1362,72 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
         isOwner()
           ? `<div style="margin-top:18px;margin-bottom:6px;font-size:13px;font-weight:600;color:var(--ink-soft);">Excel (.xlsx) olaraq yüklə</div>
              <div class="field-row" style="margin-bottom:10px;"><button class="btn" id="reportExcelDay">${ICONS.download} Günün hesabatı</button></div>
-             <div><button class="btn-outline" id="reportExcelAll">${ICONS.download} Bütün tarixçəni yüklə</button></div>`
+             <div class="field-row" style="margin-bottom:10px;"><button class="btn-outline" id="reportExcelAll">${ICONS.download} Bütün tarixçəni yüklə</button></div>
+             <div><button class="btn-outline" id="reportExcelPrint">${ICONS.download} Çap üçün (bir səhifə)</button></div>`
           : ""
       }
     `;
+  }
+
+  function downloadPrintableExcel(reportDate) {
+    const r = buildReportData(reportDate);
+    const rows = [];
+    rows.push(["Fındıq hesabatı"]);
+    rows.push([reportDate]);
+    rows.push([]);
+
+    rows.push(["Davamiyyət"]);
+    rows.push([r.attendanceDay.length ? r.attendanceDay.map((a) => a.person).join(", ") : "qeyd yoxdur", "", r.attendanceDay.length + " nəfər"]);
+    rows.push([]);
+
+    rows.push(["Alışlar"]);
+    rows.push(["Tarix", "Vaxt", "Kim", "Kq", "Növ", "Məbləğ", "Qeyd"]);
+    r.purchases.forEach((p) => rows.push([p.date, p.time || "", p.supplier, p.kg, p.type || "", p.sum, p.note || ""]));
+    rows.push(["", "", "CƏMİ", r.totalKg, "", r.totalPurchaseSum, ""]);
+    rows.push([]);
+
+    rows.push(["Satışlar"]);
+    rows.push(["Tarix", "Vaxt", "Kim", "Kq", "Növ", "Məbləğ", "Qeyd"]);
+    r.sales.forEach((s) => rows.push([s.date, s.time || "", s.buyer, s.kg, s.type || "", s.sum, s.note || ""]));
+    rows.push(["", "", "CƏMİ", r.totalSalesKg, "", r.totalSalesSum, ""]);
+    rows.push([]);
+
+    rows.push(["Sürücülər"]);
+    rows.push(["Sürücü", "Avans", "Aldığı (kq)", "Kisə", "Xərclədiyi", "Qalıq", "Vəziyyət"]);
+    r.driverSummaries.forEach((d) => rows.push([d.driver, d.advance, d.kg, d.bags, d.spent, d.remaining, d.settled ? "Bağlıdır" : (d.remaining > 0 ? "Bizə qaytarmalıdır" : d.remaining < 0 ? "Biz ona borcluyuq" : "Sıfırdır")]));
+    rows.push([]);
+
+    rows.push(["Kassa"]);
+    rows.push(["Mədaxil", r.cashIn]);
+    rows.push(["Kassadan çıxan", r.cashOut]);
+    rows.push(["Kassada qalıq (indiki)", cashBalance()]);
+    rows.push([]);
+
+    rows.push(["Xərclər"]);
+    rows.push(["Maddə", "Məbləğ", "Qeyd"]);
+    r.expenses.forEach((e) => rows.push([e.category, e.sum, e.note || ""]));
+    rows.push(["CƏMİ", r.totalExpenses, ""]);
+    rows.push([]);
+
+    rows.push(["Borclar (bu gün)"]);
+    rows.push(["Ad", "Məbləğ", "İstiqamət"]);
+    r.debts.forEach((d) => rows.push([d.person, d.sum, d.direction === "gave" ? "Bizə borcludur" : "Biz borcluyuq"]));
+    rows.push([]);
+
+    rows.push(["Maşın"]);
+    rows.push(["Sürücü", "Kim təhvil verib", "Kq", "Kisə", "Alışda qeyd olunan kq", "Fərq"]);
+    r.truckDay.forEach((t) => {
+      t.entries.forEach((e) => {
+        const purchasedKg = r.purchases.filter((p) => p.supplier === e.supplier).reduce((s, p) => s + p.kg, 0);
+        rows.push([t.driver, e.supplier, e.kg, e.bags, purchasedKg || "", purchasedKg ? Number((e.kg - purchasedKg).toFixed(2)) : ""]);
+      });
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = [{ wch: 22 }, { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 22 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Hesabat");
+    XLSX.writeFile(wb, `hesabat_cap_${reportDate}.xlsx`);
   }
 
   function downloadDayExcel(reportDate) {
@@ -1703,6 +1782,8 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
     if (excelDayBtn) excelDayBtn.onclick = () => downloadDayExcel(state.reportDate);
     const excelAllBtn = document.getElementById("reportExcelAll");
     if (excelAllBtn) excelAllBtn.onclick = () => downloadAllExcel();
+    const excelPrintBtn = document.getElementById("reportExcelPrint");
+    if (excelPrintBtn) excelPrintBtn.onclick = () => downloadPrintableExcel(state.reportDate);
   }
 
   // ---------- Boot ----------
