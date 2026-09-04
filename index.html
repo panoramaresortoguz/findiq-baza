@@ -115,6 +115,28 @@
   }
   .loading-screen { height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--paper); color: var(--muted); }
   .viewer-note { font-size: 12px; color: var(--muted); text-align: center; margin-bottom: 14px; }
+  .time-note { font-size: 11.5px; color: var(--muted); margin: -4px 0 10px; }
+
+  /* Desktop: compact controls, tab bar moves to top */
+  @media (min-width: 860px) {
+    #app { display: flex; flex-direction: column; align-items: center; padding-bottom: 0; }
+    .header { order: 0; width: 100%; max-width: 760px; padding: 20px 0 10px; }
+    .tabbar {
+      order: 1; position: static; width: 100%; max-width: 760px; justify-content: center;
+      border-top: none; border-bottom: 1px solid var(--line-soft); overflow-x: visible; padding: 6px 0 8px;
+    }
+    .content { order: 2; width: 100%; max-width: 760px; padding: 20px 0; }
+    .tab-btn { padding: 5px 16px; min-width: auto; }
+    .tab-btn svg { width: 16px; height: 16px; }
+    .tab-btn span { font-size: 11.5px; }
+    .btn, .btn-outline { width: auto; max-width: 240px; padding: 9px 18px; font-size: 13.5px; }
+    .toggle-btn { padding: 7px 14px; font-size: 12.5px; max-width: 220px; }
+    .stat-card { min-width: 160px; }
+    .stat-value { font-size: 19px; }
+    .field-row { max-width: 560px; }
+    input, select { padding: 8px 11px; font-size: 14px; }
+    .card-box { max-width: 560px; }
+  }
 </style>
 
 <div id="app"><div class="loading-screen">Yüklənir…</div></div>
@@ -161,12 +183,13 @@
     showLogin: false,
     loginError: "",
     purchases: [],
+    sales: [],
     expenses: [],
     debts: [],
     cashLog: [],
     attendance: [],
     truckLoads: [],
-    dataLoaded: { purchases: false, expenses: false, debts: false, cashLog: false, attendance: false, truckLoads: false },
+    dataLoaded: { purchases: false, sales: false, expenses: false, debts: false, cashLog: false, attendance: false, truckLoads: false },
     // ephemeral form state per tab (kept simple, re-read from DOM on submit)
     reportDate: todayISO(),
     debtSearch: "",
@@ -177,6 +200,10 @@
 
   function todayISO() {
     return new Date().toISOString().slice(0, 10);
+  }
+  function nowTime() {
+    const d = new Date();
+    return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
   }
   function fmt(n) {
     const num = Number(n) || 0;
@@ -200,12 +227,14 @@
     plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14"/></svg>',
     trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>',
     download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg>',
+    sell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 7 13.5 15.5 8.5 10.5 2 17"/><path d="M16 7h6v6"/></svg>',
   };
 
   const TABS = [
     { id: "report", label: "Hesabat", icon: "send", ownerOnly: false },
     { id: "kassa", label: "Kassa", icon: "wallet", ownerOnly: true },
     { id: "purchases", label: "Alışlar", icon: "package", ownerOnly: true },
+    { id: "sales", label: "Satışlar", icon: "sell", ownerOnly: true },
     { id: "expenses", label: "Xərclər", icon: "receipt", ownerOnly: true },
     { id: "debts", label: "Borclar", icon: "hand", ownerOnly: true },
     { id: "attendance", label: "Davamiyyət", icon: "calendar", ownerOnly: true },
@@ -231,6 +260,7 @@
 
   function initListeners() {
     attachListener("purchases", "purchases");
+    attachListener("sales", "sales");
     attachListener("expenses", "expenses");
     attachListener("debts", "debts");
     attachListener("cashLog", "cashLog");
@@ -266,7 +296,7 @@
   }
 
   async function addPurchase(p) {
-    const entry = { date: todayISO(), ...p };
+    const entry = { date: todayISO(), time: nowTime(), ...p };
     await addDoc("purchases", entry);
     await addDoc("cashLog", { date: todayISO(), type: "out", sum: entry.sum, note: "Alış: " + entry.supplier });
   }
@@ -274,6 +304,17 @@
     const p = state.purchases.find((x) => x.id === id);
     await deleteDoc("purchases", id);
     if (p) await addDoc("cashLog", { date: todayISO(), type: "in", sum: p.sum, note: "Ləğv edildi: " + p.supplier });
+  }
+
+  async function addSale(s) {
+    const entry = { date: todayISO(), time: nowTime(), ...s };
+    await addDoc("sales", entry);
+    await addDoc("cashLog", { date: todayISO(), type: "in", sum: entry.sum, note: "Satış: " + entry.buyer });
+  }
+  async function deleteSale(id) {
+    const s = state.sales.find((x) => x.id === id);
+    await deleteDoc("sales", id);
+    if (s) await addDoc("cashLog", { date: todayISO(), type: "out", sum: s.sum, note: "Satış ləğv edildi: " + s.buyer });
   }
 
   async function addExpense(e) {
@@ -436,6 +477,7 @@
     if (state.tab === "report") el.innerHTML = renderReportTab();
     else if (state.tab === "kassa" && isOwner()) el.innerHTML = renderKassaTab();
     else if (state.tab === "purchases" && isOwner()) el.innerHTML = renderPurchasesTab();
+    else if (state.tab === "sales" && isOwner()) el.innerHTML = renderSalesTab();
     else if (state.tab === "expenses" && isOwner()) el.innerHTML = renderExpensesTab();
     else if (state.tab === "debts" && isOwner()) el.innerHTML = renderDebtsTab();
     else if (state.tab === "attendance" && isOwner()) el.innerHTML = renderAttendanceTab();
@@ -495,7 +537,7 @@
     return `
       <div class="stat-row">
         <div class="stat-card"><div class="stat-label">${ICONS.package}Bu gün alınıb</div><div class="stat-value">${fmt(todayKg)} kg</div></div>
-        <div class="stat-card green"><div class="stat-label">${ICONS.wallet}Bu günün məbləği</div><div class="stat-value">${fmt(todaySum)}</div></div>
+        <div class="stat-card green"><div class="stat-label">${ICONS.wallet}Bugünün alış məbləği</div><div class="stat-value">${fmt(todaySum)}</div></div>
       </div>
       <div class="stat-row"><div class="stat-card"><div class="stat-label">Bu gün kisə sayı</div><div class="stat-value">${fmt(todayBags)}</div></div></div>
       <div class="section">
@@ -508,9 +550,10 @@
           <div class="field"><label>Kq</label><input id="pKg" type="number" inputmode="decimal" placeholder="0" /></div>
           <div class="field"><label>Kisə sayı</label><input id="pBags" type="number" inputmode="decimal" placeholder="0" /></div>
         </div>
-        <div class="field-row"><div class="field"><label>Kq üçün qiymət</label><input id="pPrice" type="number" inputmode="decimal" placeholder="0" /></div></div>
-        <div id="pSumDisplay" style="text-align:center;font-size:14px;color:var(--ink);margin-bottom:10px;"></div>
+        <div class="field-row"><div class="field"><label>Ödənilən məbləğ</label><input id="pSum" type="number" inputmode="decimal" placeholder="0" /></div></div>
+        <div id="pAvgDisplay" style="text-align:center;font-size:12.5px;color:var(--muted);margin-bottom:10px;"></div>
         <div class="field-row"><div class="field"><label>Qeyd</label><input id="pNote" placeholder="əlavə qeyd" /></div></div>
+        <div class="time-note">Vaxt avtomatik qeyd olunacaq: ${nowTime()}</div>
         <button class="btn" id="pSubmit">${ICONS.plus} Alışı qeyd et</button>
       </div>
       <div class="section">
@@ -521,12 +564,60 @@
             : [...state.purchases].reverse().map((p) => `
               <div class="list-row">
                 <div>
-                  <div class="title">${esc(p.supplier)} — ${fmt(p.kg)} kq${p.bags ? " (" + p.bags + " kisə)" : ""} × ${fmt(p.price)} · ${esc(p.type || "")}</div>
-                  <div class="meta">${esc(p.date)}${p.note ? " · " + esc(p.note) : ""}</div>
+                  <div class="title">${esc(p.supplier)} — ${fmt(p.kg)} kq${p.bags ? " (" + p.bags + " kisə)" : ""} · ${esc(p.type || "")}</div>
+                  <div class="meta">${esc(p.date)}${p.time ? " · " + esc(p.time) : ""}${p.note ? " · " + esc(p.note) : ""}</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px;">
                   <div class="right">${fmt(p.sum)}</div>
                   <button class="del-btn" data-del-purchase="${p.id}">${ICONS.trash}</button>
+                </div>
+              </div>`).join("")
+        }
+      </div>
+    `;
+  }
+
+  // ---------- Sales ----------
+  let saleType = NUT_TYPES[0];
+  function renderSalesTab() {
+    const today = todayISO();
+    const todays = state.sales.filter((s) => s.date === today);
+    const todayKg = todays.reduce((s, x) => s + x.kg, 0);
+    const todaySum = todays.reduce((s, x) => s + x.sum, 0);
+    return `
+      <div class="stat-row">
+        <div class="stat-card"><div class="stat-label">${ICONS.sell}Bu gün satılıb</div><div class="stat-value">${fmt(todayKg)} kg</div></div>
+        <div class="stat-card green"><div class="stat-label">${ICONS.wallet}Bugünün satış məbləği</div><div class="stat-value">${fmt(todaySum)}</div></div>
+      </div>
+      <div class="section">
+        <div class="section-title">Yeni satış</div>
+        <div class="field-row"><div class="field"><label>Kim aldı (məcburi deyil)</label><input id="sBuyer" placeholder="Ad" /></div></div>
+        <div class="toggle-row">
+          ${NUT_TYPES.map((t) => `<button class="toggle-btn ${saleType === t ? "active-ink" : ""}" data-sale-type="${esc(t)}">${esc(t)}</button>`).join("")}
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Kq</label><input id="sKg" type="number" inputmode="decimal" placeholder="0" /></div>
+          <div class="field"><label>Kisə sayı</label><input id="sBags" type="number" inputmode="decimal" placeholder="0" /></div>
+        </div>
+        <div class="field-row"><div class="field"><label>Alınan məbləğ</label><input id="sSum" type="number" inputmode="decimal" placeholder="0" /></div></div>
+        <div class="field-row"><div class="field"><label>Qeyd</label><input id="sNote" placeholder="əlavə qeyd" /></div></div>
+        <div class="time-note">Vaxt avtomatik qeyd olunacaq: ${nowTime()}</div>
+        <button class="btn green" id="sSubmit">${ICONS.plus} Satışı qeyd et</button>
+      </div>
+      <div class="section">
+        <div class="section-title">Qeydlər (${state.sales.length})</div>
+        ${
+          state.sales.length === 0
+            ? '<div class="empty">Hələlik boşdur</div>'
+            : [...state.sales].reverse().map((s) => `
+              <div class="list-row">
+                <div>
+                  <div class="title">${esc(s.buyer)} — ${fmt(s.kg)} kq${s.bags ? " (" + s.bags + " kisə)" : ""} · ${esc(s.type || "")}</div>
+                  <div class="meta">${esc(s.date)}${s.time ? " · " + esc(s.time) : ""}${s.note ? " · " + esc(s.note) : ""}</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <div class="right green">+${fmt(s.sum)}</div>
+                  <button class="del-btn" data-del-sale="${s.id}">${ICONS.trash}</button>
                 </div>
               </div>`).join("")
         }
@@ -753,6 +844,7 @@
   // ---------- Report ----------
   function buildReportData(reportDate) {
     const purchases = state.purchases.filter((p) => p.date === reportDate);
+    const sales = state.sales.filter((s) => s.date === reportDate);
     const expenses = state.expenses.filter((e) => e.date === reportDate);
     const cashLog = state.cashLog.filter((c) => c.date === reportDate);
     const debts = state.debts.filter((d) => d.date === reportDate);
@@ -762,13 +854,15 @@
     const totalKg = purchases.reduce((s, p) => s + p.kg, 0);
     const totalBags = purchases.reduce((s, p) => s + (p.bags || 0), 0);
     const totalPurchaseSum = purchases.reduce((s, p) => s + p.sum, 0);
+    const totalSalesKg = sales.reduce((s, x) => s + x.kg, 0);
+    const totalSalesSum = sales.reduce((s, x) => s + x.sum, 0);
     const totalExpenses = expenses.reduce((s, e) => s + e.sum, 0);
     const cashIn = cashLog.filter((c) => c.type === "in").reduce((s, c) => s + c.sum, 0);
     const cashOut = cashLog.filter((c) => c.type === "out").reduce((s, c) => s + c.sum, 0);
     const truckTotalKg = truckDay.reduce((s, t) => s + t.entries.reduce((s2, e) => s2 + e.kg, 0), 0);
     const truckTotalBags = truckDay.reduce((s, t) => s + t.entries.reduce((s2, e) => s2 + e.bags, 0), 0);
 
-    return { purchases, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalBags, totalPurchaseSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags };
+    return { purchases, sales, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalBags, totalPurchaseSum, totalSalesKg, totalSalesSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags };
   }
 
   function buildReportText(reportDate) {
@@ -778,8 +872,12 @@
 👷 Davamiyyət: ${r.attendanceDay.length ? r.attendanceDay.map((a) => a.person).join(", ") : "qeyd yoxdur"} (${r.attendanceDay.length} nəfər)
 
 🌰 Qoz-fındıq alışı:
-${r.purchases.length ? r.purchases.map((p) => `• ${p.supplier}: ${fmt(p.kg)} kq${p.bags ? " (" + p.bags + " kisə)" : ""} × ${fmt(p.price)} = ${fmt(p.sum)} [${p.type || ""}]`).join("\n") : "qeyd yoxdur"}
+${r.purchases.length ? r.purchases.map((p) => `• ${p.supplier}: ${fmt(p.kg)} kq${p.bags ? " (" + p.bags + " kisə)" : ""} = ${fmt(p.sum)} [${p.type || ""}]${p.time ? " · " + p.time : ""}`).join("\n") : "qeyd yoxdur"}
 Cəmi: ${fmt(r.totalKg)} kq, ${fmt(r.totalBags)} kisə, məbləğ ${fmt(r.totalPurchaseSum)}
+
+🛒 Satışlar:
+${r.sales.length ? r.sales.map((s) => `• ${s.buyer}: ${fmt(s.kg)} kq${s.bags ? " (" + s.bags + " kisə)" : ""} = ${fmt(s.sum)} [${s.type || ""}]${s.time ? " · " + s.time : ""}`).join("\n") : "qeyd yoxdur"}
+Cəmi: ${fmt(r.totalSalesKg)} kq, məbləğ ${fmt(r.totalSalesSum)}
 
 💵 Kassa:
 Mədaxil: +${fmt(r.cashIn)}
@@ -822,9 +920,13 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
     const r = buildReportData(reportDate);
     const wb = XLSX.utils.book_new();
 
-    const purchaseRows = r.purchases.map((p) => ({ Tarix: p.date, "Kim təhvil verdi": p.supplier, Kq: p.kg, "Kisə sayı": p.bags || 0, Növ: p.type || "", "Kq üçün qiymət": p.price, Məbləğ: p.sum, Qeyd: p.note || "" }));
-    if (purchaseRows.length) purchaseRows.push({ Tarix: "", "Kim təhvil verdi": "CƏMİ", Kq: r.totalKg, "Kisə sayı": r.totalBags, Növ: "", "Kq üçün qiymət": "", Məbləğ: r.totalPurchaseSum, Qeyd: "" });
+    const purchaseRows = r.purchases.map((p) => ({ Tarix: p.date, Vaxt: p.time || "", "Kim təhvil verdi": p.supplier, Kq: p.kg, "Kisə sayı": p.bags || 0, Növ: p.type || "", "Orta qiymət (kq)": p.price || "", Məbləğ: p.sum, Qeyd: p.note || "" }));
+    if (purchaseRows.length) purchaseRows.push({ Tarix: "", Vaxt: "", "Kim təhvil verdi": "CƏMİ", Kq: r.totalKg, "Kisə sayı": r.totalBags, Növ: "", "Orta qiymət (kq)": "", Məbləğ: r.totalPurchaseSum, Qeyd: "" });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(purchaseRows.length ? purchaseRows : [{ Tarix: reportDate, Qeyd: "qeyd yoxdur" }]), "Alışlar");
+
+    const saleRows = r.sales.map((s) => ({ Tarix: s.date, Vaxt: s.time || "", "Kim aldı": s.buyer, Kq: s.kg, "Kisə sayı": s.bags || 0, Növ: s.type || "", Məbləğ: s.sum, Qeyd: s.note || "" }));
+    if (saleRows.length) saleRows.push({ Tarix: "", Vaxt: "", "Kim aldı": "CƏMİ", Kq: r.totalSalesKg, "Kisə sayı": "", Növ: "", Məbləğ: r.totalSalesSum, Qeyd: "" });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(saleRows.length ? saleRows : [{ Tarix: reportDate, Qeyd: "qeyd yoxdur" }]), "Satışlar");
 
     const expenseRows = r.expenses.map((e) => ({ Tarix: e.date, Maddə: e.category, Məbləğ: e.sum, Qeyd: e.note || "" }));
     if (expenseRows.length) expenseRows.push({ Tarix: "", Maddə: "CƏMİ", Məbləğ: r.totalExpenses, Qeyd: "" });
@@ -855,6 +957,8 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
       { Göstərici: "Alınan miqdar (kq)", Dəyər: r.totalKg },
       { Göstərici: "Alınan kisə sayı", Dəyər: r.totalBags },
       { Göstərici: "Alış məbləği", Dəyər: r.totalPurchaseSum },
+      { Göstərici: "Satış miqdarı (kq)", Dəyər: r.totalSalesKg },
+      { Göstərici: "Satış məbləği", Dəyər: r.totalSalesSum },
       { Göstərici: "Xərclər cəmi", Dəyər: r.totalExpenses },
       { Göstərici: "Kassaya mədaxil", Dəyər: r.cashIn },
       { Göstərici: "Kassadan çıxan", Dəyər: r.cashOut },
@@ -869,7 +973,8 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
 
   function downloadAllExcel() {
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.purchases.map((p) => ({ Tarix: p.date, "Kim təhvil verdi": p.supplier, Kq: p.kg, "Kisə sayı": p.bags || 0, Növ: p.type || "", "Kq üçün qiymət": p.price, Məbləğ: p.sum, Qeyd: p.note || "" }))), "Alışlar");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.purchases.map((p) => ({ Tarix: p.date, Vaxt: p.time || "", "Kim təhvil verdi": p.supplier, Kq: p.kg, "Kisə sayı": p.bags || 0, Növ: p.type || "", "Orta qiymət (kq)": p.price || "", Məbləğ: p.sum, Qeyd: p.note || "" }))), "Alışlar");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.sales.map((s) => ({ Tarix: s.date, Vaxt: s.time || "", "Kim aldı": s.buyer, Kq: s.kg, "Kisə sayı": s.bags || 0, Növ: s.type || "", Məbləğ: s.sum, Qeyd: s.note || "" }))), "Satışlar");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.expenses.map((e) => ({ Tarix: e.date, Maddə: e.category, Məbləğ: e.sum, Qeyd: e.note || "" }))), "Xərclər");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.cashLog.map((c) => ({ Tarix: c.date, Növ: c.type === "in" ? "Mədaxil" : "Çıxarış", Məbləğ: c.sum, Qeyd: c.note || "" }))), "Kassa");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.debts.map((d) => ({ Tarix: d.date, Ad: d.person, Məbləğ: d.sum, İstiqamət: d.direction === "gave" ? "Bizə borcludur" : "Biz borcluyuq", Ödənilib: d.paid ? "Bəli" : "Xeyr", Qeyd: d.note || "" }))), "Borclar");
@@ -889,6 +994,7 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
   function attachTabEvents() {
     if (state.tab === "kassa") wireKassa();
     else if (state.tab === "purchases") wirePurchases();
+    else if (state.tab === "sales") wireSales();
     else if (state.tab === "expenses") wireExpenses();
     else if (state.tab === "debts") wireDebts();
     else if (state.tab === "attendance") wireAttendance();
@@ -918,26 +1024,45 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
     document.querySelectorAll("[data-nut-type]").forEach((btn) => {
       btn.onclick = () => { purchaseType = btn.dataset.nutType; renderTabContent(); };
     });
-    function updateSum() {
+    function updateAvg() {
       const kg = Number(document.getElementById("pKg").value) || 0;
-      const price = Number(document.getElementById("pPrice").value) || 0;
-      const sum = kg * price;
-      document.getElementById("pSumDisplay").innerHTML = sum > 0 ? `Məbləğ: <b>${fmt(sum)}</b>` : "";
+      const sum = Number(document.getElementById("pSum").value) || 0;
+      const avg = kg > 0 && sum > 0 ? sum / kg : 0;
+      document.getElementById("pAvgDisplay").innerHTML = avg > 0 ? `Orta qiymət: ${fmt(avg)} / kq (məlumat üçün)` : "";
     }
-    document.getElementById("pKg").oninput = updateSum;
-    document.getElementById("pPrice").oninput = updateSum;
-    updateSum();
+    document.getElementById("pKg").oninput = updateAvg;
+    document.getElementById("pSum").oninput = updateAvg;
+    updateAvg();
     document.getElementById("pSubmit").onclick = async () => {
       const kg = Number(document.getElementById("pKg").value);
-      const price = Number(document.getElementById("pPrice").value);
-      if (!kg || !price) return;
+      const sum = Number(document.getElementById("pSum").value);
+      if (!kg || !sum) return;
       const supplier = document.getElementById("pSupplier").value.trim() || "Adsız";
       const bags = Number(document.getElementById("pBags").value) || 0;
       const note = document.getElementById("pNote").value;
-      await addPurchase({ supplier, kg, bags, type: purchaseType, price, sum: kg * price, note });
+      const price = Number((sum / kg).toFixed(2));
+      await addPurchase({ supplier, kg, bags, type: purchaseType, price, sum, note });
     };
     document.querySelectorAll("[data-del-purchase]").forEach((btn) => {
       btn.onclick = () => deletePurchase(btn.dataset.delPurchase);
+    });
+  }
+
+  function wireSales() {
+    document.querySelectorAll("[data-sale-type]").forEach((btn) => {
+      btn.onclick = () => { saleType = btn.dataset.saleType; renderTabContent(); };
+    });
+    document.getElementById("sSubmit").onclick = async () => {
+      const kg = Number(document.getElementById("sKg").value);
+      const sum = Number(document.getElementById("sSum").value);
+      if (!kg || !sum) return;
+      const buyer = document.getElementById("sBuyer").value.trim() || "Adsız";
+      const bags = Number(document.getElementById("sBags").value) || 0;
+      const note = document.getElementById("sNote").value;
+      await addSale({ buyer, kg, bags, type: saleType, sum, note });
+    };
+    document.querySelectorAll("[data-del-sale]").forEach((btn) => {
+      btn.onclick = () => deleteSale(btn.dataset.delSale);
     });
   }
 
