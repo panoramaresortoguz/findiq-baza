@@ -1,0 +1,1082 @@
+<style>
+  :root {
+    --paper: #F5EFE0;
+    --card: #EDE7D6;
+    --ink: #1B2A5B;
+    --ink-soft: #7A7263;
+    --line: #DCD4BF;
+    --line-soft: #E5DDC8;
+    --white: #FFFDF8;
+    --green: #3D6B4F;
+    --green-bg: #E4EEE4;
+    --red: #B5502E;
+    --red-bg: #F3E4DC;
+    --muted: #948C7A;
+  }
+  * { box-sizing: border-box; }
+  #app {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--paper);
+    min-height: 100vh;
+    color: #2A2618;
+    padding-bottom: 90px;
+  }
+  .header {
+    padding: 18px 16px 8px;
+    border-bottom: 1px solid var(--line-soft);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .header h1 { font-size: 20px; font-weight: 700; color: var(--ink); margin: 0; letter-spacing: -0.3px; }
+  .header p { font-size: 12.5px; color: var(--muted); margin: 2px 0 0; }
+  .auth-btn {
+    border: 1.5px solid var(--line); background: var(--white); color: var(--ink-soft);
+    border-radius: 20px; padding: 6px 14px; font-size: 12.5px; cursor: pointer; font-weight: 600;
+    white-space: nowrap;
+  }
+  .auth-btn.signed-in { border-color: var(--green); color: var(--green); background: var(--green-bg); }
+  .content { padding: 16px; max-width: 640px; margin: 0 auto; }
+  .stat-row { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+  .stat-card { background: var(--card); border-radius: 14px; padding: 14px 16px; flex: 1; min-width: 130px; }
+  .stat-card.green { background: var(--green-bg); }
+  .stat-card.red { background: var(--red-bg); }
+  .stat-label { font-size: 12.5px; opacity: 0.75; display: flex; align-items: center; gap: 6px; }
+  .stat-card { color: var(--ink); }
+  .stat-card.green { color: var(--green); }
+  .stat-card.red { color: var(--red); }
+  .stat-value { font-size: 22px; font-weight: 700; margin-top: 4px; letter-spacing: -0.3px; }
+  .section { margin-bottom: 22px; }
+  .section-title { font-size: 13px; font-weight: 600; color: var(--ink-soft); margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+  .field-row { display: flex; gap: 8px; margin-bottom: 10px; }
+  .field { flex: 1; }
+  .field label { font-size: 12px; color: var(--ink-soft); margin-bottom: 4px; display: block; }
+  input, select {
+    width: 100%; box-sizing: border-box; border: 1.5px solid var(--line); border-radius: 10px;
+    padding: 10px 12px; font-size: 15px; background: var(--white); color: #2A2618; outline: none;
+    font-family: inherit;
+  }
+  .btn {
+    width: 100%; border: none; border-radius: 10px; padding: 12px 16px; font-size: 15px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; color: var(--white);
+    background: var(--ink);
+  }
+  .btn.green { background: var(--green); }
+  .btn.red { background: var(--red); }
+  .btn:disabled { background: #C9C2B0; cursor: default; }
+  .btn-outline {
+    width: 100%; background: var(--white); border: 1.5px solid var(--line); border-radius: 10px;
+    padding: 11px 16px; font-size: 14px; color: var(--ink-soft); cursor: pointer;
+  }
+  .toggle-row { display: flex; gap: 8px; margin-bottom: 10px; }
+  .toggle-btn {
+    flex: 1; padding: 9px; border-radius: 9px; border: 1.5px solid var(--line); background: var(--white);
+    color: var(--muted); font-weight: 600; font-size: 13px; cursor: pointer;
+  }
+  .toggle-btn.active-green { border-color: var(--green); background: var(--green-bg); color: var(--green); }
+  .toggle-btn.active-red { border-color: var(--red); background: var(--red-bg); color: var(--red); }
+  .toggle-btn.active-ink { border-color: var(--ink); background: var(--card); color: var(--ink); }
+  .list-row {
+    display: flex; justify-content: space-between; align-items: center; padding: 12px 4px;
+    border-bottom: 1px solid var(--line-soft); gap: 10px;
+  }
+  .list-row .title { font-size: 14.5px; font-weight: 500; }
+  .list-row .meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .list-row .right { font-size: 15px; font-weight: 700; flex-shrink: 0; }
+  .list-row .right.green { color: var(--green); }
+  .list-row .right.red { color: var(--red); }
+  .del-btn { background: none; border: none; color: var(--red); opacity: 0.5; cursor: pointer; padding: 4px; }
+  .empty { color: var(--muted); font-size: 13.5px; }
+  .chip { border: 1.5px solid var(--line); background: var(--white); color: var(--ink-soft); border-radius: 20px; padding: 6px 12px; font-size: 12.5px; cursor: pointer; margin: 3px; }
+  .chip.active { border-color: var(--red); background: var(--red-bg); color: var(--red); }
+  .tabbar {
+    position: fixed; bottom: 0; left: 0; right: 0; background: var(--white); border-top: 1px solid var(--line-soft);
+    display: flex; padding: 8px 4px 10px; overflow-x: auto; gap: 2px; z-index: 20;
+  }
+  .tab-btn {
+    background: none; border: none; display: flex; flex-direction: column; align-items: center; gap: 3px;
+    color: var(--muted); cursor: pointer; padding: 4px 10px; flex-shrink: 0; min-width: 58px; font-size: 10px; font-weight: 500;
+  }
+  .tab-btn.active { color: var(--ink); font-weight: 700; }
+  .tab-btn svg { width: 19px; height: 19px; }
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(27,42,91,0.35); display: flex; align-items: center; justify-content: center;
+    z-index: 100; padding: 20px;
+  }
+  .modal {
+    background: var(--white); border-radius: 16px; padding: 22px; width: 100%; max-width: 340px;
+  }
+  .modal h2 { font-size: 17px; color: var(--ink); margin: 0 0 14px; }
+  .modal-err { color: var(--red); font-size: 12.5px; margin-bottom: 8px; min-height: 16px; }
+  .card-box { background: var(--white); border: 1.5px solid var(--line-soft); border-radius: 10px; padding: 10px; margin-bottom: 8px; }
+  .report-box {
+    background: var(--white); border: 1.5px solid var(--line); border-radius: 12px; padding: 14px;
+    white-space: pre-wrap; font-size: 13.5px; color: #2A2618; line-height: 1.6; margin-bottom: 16px; font-family: monospace;
+  }
+  .loading-screen { height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--paper); color: var(--muted); }
+  .viewer-note { font-size: 12px; color: var(--muted); text-align: center; margin-bottom: 14px; }
+</style>
+
+<div id="app"><div class="loading-screen">Yüklənir…</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-app-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-auth-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-firestore-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------- Firebase init ----------
+  const firebaseConfig = {
+    apiKey: "AIzaSyCTUqEoNTASFjQldIjYUD20vozb-4Qb1-A",
+    authDomain: "findiq-baza.firebaseapp.com",
+    projectId: "findiq-baza",
+    storageBucket: "findiq-baza.firebasestorage.app",
+    messagingSenderId: "364297020970",
+    appId: "1:364297020970:web:d412423ed1d1b76b548553",
+    measurementId: "G-Z8WNL6QZGW",
+  };
+
+  let fbApp, auth, db;
+  let firebaseReady = false;
+  try {
+    fbApp = firebase.initializeApp(firebaseConfig);
+    auth = firebase.auth();
+    db = firebase.firestore();
+    firebaseReady = true;
+  } catch (e) {
+    console.error("Firebase init error", e);
+  }
+
+  const NUT_TYPES = ["Pasos", "Əl fındığı", "Digər"];
+  const QUICK_EXPENSE_CATS = ["Kirayə", "Nəqliyyat", "Sənəd/pasport", "Təmizlik", "İnventar", "Əmək haqqı"];
+
+  // ---------- State ----------
+  const state = {
+    tab: "report",
+    user: null,
+    authLoading: true,
+    showLogin: false,
+    loginError: "",
+    purchases: [],
+    expenses: [],
+    debts: [],
+    cashLog: [],
+    attendance: [],
+    truckLoads: [],
+    dataLoaded: { purchases: false, expenses: false, debts: false, cashLog: false, attendance: false, truckLoads: false },
+    // ephemeral form state per tab (kept simple, re-read from DOM on submit)
+    reportDate: todayISO(),
+    debtSearch: "",
+    truckDate: todayISO(),
+    truckEntries: [{ id: uid(), supplier: "", kg: "", bags: "" }],
+    attendanceDate: todayISO(),
+  };
+
+  function todayISO() {
+    return new Date().toISOString().slice(0, 10);
+  }
+  function fmt(n) {
+    const num = Number(n) || 0;
+    return num.toLocaleString("az-AZ", { maximumFractionDigits: 2 });
+  }
+  function uid() {
+    return Math.random().toString(36).slice(2, 10);
+  }
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  const ICONS = {
+    wallet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>',
+    package: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>',
+    receipt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M16 8h-6"/><path d="M14 12H8"/></svg>',
+    hand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 12h2a2 2 0 1 0 0-4h-3c-.6 0-1.1.2-1.4.6L3 14"/><path d="m7 20 1.6-1.4c.3-.4.8-.6 1.4-.6h4c1.1 0 2.1-.4 2.8-1.2l4.6-4.4a2 2 0 0 0-2.75-2.91l-4.2 3.9"/><path d="m2 15 6 6"/></svg>',
+    calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
+    truck: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.62L18.5 8.5A1 1 0 0 0 17.7 8H14v10h1"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></svg>',
+    send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>',
+    plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14"/></svg>',
+    trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>',
+    download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg>',
+  };
+
+  const TABS = [
+    { id: "report", label: "Hesabat", icon: "send", ownerOnly: false },
+    { id: "kassa", label: "Kassa", icon: "wallet", ownerOnly: true },
+    { id: "purchases", label: "Alışlar", icon: "package", ownerOnly: true },
+    { id: "expenses", label: "Xərclər", icon: "receipt", ownerOnly: true },
+    { id: "debts", label: "Borclar", icon: "hand", ownerOnly: true },
+    { id: "attendance", label: "Davamiyyət", icon: "calendar", ownerOnly: true },
+    { id: "truck", label: "Maşın", icon: "truck", ownerOnly: true },
+  ];
+
+  // ---------- Firestore live sync ----------
+  function attachListener(collectionName, stateKey) {
+    if (!firebaseReady) return;
+    db.collection(collectionName).onSnapshot(
+      (snap) => {
+        const arr = [];
+        snap.forEach((doc) => arr.push({ id: doc.id, ...doc.data() }));
+        state[stateKey] = arr;
+        state.dataLoaded[stateKey] = true;
+        render();
+      },
+      (err) => {
+        console.error("Snapshot error", collectionName, err);
+      }
+    );
+  }
+
+  function initListeners() {
+    attachListener("purchases", "purchases");
+    attachListener("expenses", "expenses");
+    attachListener("debts", "debts");
+    attachListener("cashLog", "cashLog");
+    attachListener("attendance", "attendance");
+    attachListener("truckLoads", "truckLoads");
+  }
+
+  function cashBalance() {
+    return state.cashLog.reduce((s, c) => s + (c.type === "in" ? c.sum : -c.sum), 0);
+  }
+
+  // ---------- Write helpers ----------
+  async function addDoc(col, data) {
+    try {
+      await db.collection(col).add(data);
+    } catch (e) {
+      alert("Xəta: " + e.message);
+    }
+  }
+  async function updateDoc(col, id, data) {
+    try {
+      await db.collection(col).doc(id).update(data);
+    } catch (e) {
+      alert("Xəta: " + e.message);
+    }
+  }
+  async function deleteDoc(col, id) {
+    try {
+      await db.collection(col).doc(id).delete();
+    } catch (e) {
+      alert("Xəta: " + e.message);
+    }
+  }
+
+  async function addPurchase(p) {
+    const entry = { date: todayISO(), ...p };
+    await addDoc("purchases", entry);
+    await addDoc("cashLog", { date: todayISO(), type: "out", sum: entry.sum, note: "Alış: " + entry.supplier });
+  }
+  async function deletePurchase(id) {
+    const p = state.purchases.find((x) => x.id === id);
+    await deleteDoc("purchases", id);
+    if (p) await addDoc("cashLog", { date: todayISO(), type: "in", sum: p.sum, note: "Ləğv edildi: " + p.supplier });
+  }
+
+  async function addExpense(e) {
+    const entry = { date: todayISO(), ...e };
+    await addDoc("expenses", entry);
+    await addDoc("cashLog", { date: todayISO(), type: "out", sum: entry.sum, note: entry.category });
+  }
+  async function deleteExpense(id) {
+    const e = state.expenses.find((x) => x.id === id);
+    await deleteDoc("expenses", id);
+    if (e) await addDoc("cashLog", { date: todayISO(), type: "in", sum: e.sum, note: "Ləğv edildi: " + e.category });
+  }
+
+  async function addDebt(d) {
+    const entry = { date: todayISO(), paid: false, ...d };
+    await addDoc("debts", entry);
+    if (d.direction === "gave") {
+      await addDoc("cashLog", { date: todayISO(), type: "out", sum: d.sum, note: "Borc: " + d.person });
+    } else {
+      await addDoc("cashLog", { date: todayISO(), type: "in", sum: d.sum, note: "Borc alındı: " + d.person });
+    }
+  }
+  async function toggleDebtPaid(id) {
+    const d = state.debts.find((x) => x.id === id);
+    if (!d) return;
+    await updateDoc("debts", id, { paid: !d.paid });
+  }
+  async function deleteDebtFn(id) {
+    await deleteDoc("debts", id);
+  }
+
+  async function addCashLog(c) {
+    await addDoc("cashLog", { date: todayISO(), ...c });
+  }
+
+  async function addAttendance(a) {
+    await addDoc("attendance", a);
+  }
+  async function removeAttendance(id) {
+    await deleteDoc("attendance", id);
+  }
+
+  async function addTruckLoad(t) {
+    await addDoc("truckLoads", t);
+  }
+  async function deleteTruckLoad(id) {
+    await deleteDoc("truckLoads", id);
+  }
+
+  // ---------- Auth ----------
+  function isOwner() {
+    return !!state.user;
+  }
+
+  async function doLogin(email, password) {
+    state.loginError = "";
+    try {
+      await auth.signInWithEmailAndPassword(email, password);
+      state.showLogin = false;
+      render();
+    } catch (e) {
+      state.loginError = "Email və ya parol yanlışdır";
+      render();
+    }
+  }
+  async function doLogout() {
+    await auth.signOut();
+    state.tab = "report";
+    render();
+  }
+
+  // ---------- Render: shell ----------
+  function render() {
+    const app = document.getElementById("app");
+    if (state.authLoading) {
+      app.innerHTML = '<div class="loading-screen">Yüklənir…</div>';
+      return;
+    }
+    const visibleTabs = TABS.filter((t) => !t.ownerOnly || isOwner());
+    if (!visibleTabs.find((t) => t.id === state.tab)) state.tab = "report";
+
+    let html = "";
+    html += `<div class="header">
+      <div>
+        <h1>Fındıq hesabatı</h1>
+        <p>Fındıq alışı və xərclərin uçotu</p>
+      </div>
+      ${
+        isOwner()
+          ? `<button class="auth-btn signed-in" id="logoutBtn">Çıxış</button>`
+          : `<button class="auth-btn" id="loginOpenBtn">Giriş</button>`
+      }
+    </div>`;
+    html += `<div class="content" id="tabContent"></div>`;
+    html += `<div class="tabbar">${visibleTabs
+      .map(
+        (t) => `<button class="tab-btn ${t.id === state.tab ? "active" : ""}" data-tab="${t.id}">
+          ${ICONS[t.icon]}<span>${t.label}</span>
+        </button>`
+      )
+      .join("")}</div>`;
+
+    if (state.showLogin) {
+      html += renderLoginModal();
+    }
+
+    app.innerHTML = html;
+    renderTabContent();
+    attachShellEvents();
+  }
+
+  function renderLoginModal() {
+    return `<div class="modal-backdrop" id="loginBackdrop">
+      <div class="modal">
+        <h2>Giriş</h2>
+        <div class="field" style="margin-bottom:10px;">
+          <label>Email</label>
+          <input id="loginEmail" type="email" placeholder="email@nümunə.com" />
+        </div>
+        <div class="field" style="margin-bottom:10px;">
+          <label>Parol</label>
+          <input id="loginPassword" type="password" placeholder="••••••••" />
+        </div>
+        <div class="modal-err">${esc(state.loginError)}</div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-outline" id="loginCancelBtn" style="flex:1;">Ləğv et</button>
+          <button class="btn" id="loginSubmitBtn" style="flex:1;">Daxil ol</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function attachShellEvents() {
+    const logoutBtn = document.getElementById("logoutBtn");
+    if (logoutBtn) logoutBtn.onclick = doLogout;
+    const loginOpenBtn = document.getElementById("loginOpenBtn");
+    if (loginOpenBtn) loginOpenBtn.onclick = () => { state.showLogin = true; state.loginError = ""; render(); };
+    const loginCancelBtn = document.getElementById("loginCancelBtn");
+    if (loginCancelBtn) loginCancelBtn.onclick = () => { state.showLogin = false; render(); };
+    const loginBackdrop = document.getElementById("loginBackdrop");
+    if (loginBackdrop) loginBackdrop.addEventListener("click", (e) => { if (e.target === loginBackdrop) { state.showLogin = false; render(); } });
+    const loginSubmitBtn = document.getElementById("loginSubmitBtn");
+    if (loginSubmitBtn) {
+      loginSubmitBtn.onclick = () => {
+        const email = document.getElementById("loginEmail").value.trim();
+        const password = document.getElementById("loginPassword").value;
+        if (!email || !password) return;
+        doLogin(email, password);
+      };
+    }
+
+    document.querySelectorAll(".tab-btn").forEach((btn) => {
+      btn.onclick = () => { state.tab = btn.dataset.tab; render(); };
+    });
+  }
+
+  function renderTabContent() {
+    const el = document.getElementById("tabContent");
+    if (!el) return;
+    if (state.tab === "report") el.innerHTML = renderReportTab();
+    else if (state.tab === "kassa" && isOwner()) el.innerHTML = renderKassaTab();
+    else if (state.tab === "purchases" && isOwner()) el.innerHTML = renderPurchasesTab();
+    else if (state.tab === "expenses" && isOwner()) el.innerHTML = renderExpensesTab();
+    else if (state.tab === "debts" && isOwner()) el.innerHTML = renderDebtsTab();
+    else if (state.tab === "attendance" && isOwner()) el.innerHTML = renderAttendanceTab();
+    else if (state.tab === "truck" && isOwner()) el.innerHTML = renderTruckTab();
+    else el.innerHTML = renderReportTab();
+    attachTabEvents();
+  }
+
+  // ---------- Kassa ----------
+  function renderKassaTab() {
+    const totalIn = state.cashLog.filter((c) => c.type === "in").reduce((s, c) => s + c.sum, 0);
+    const totalOut = state.cashLog.filter((c) => c.type === "out").reduce((s, c) => s + c.sum, 0);
+    const balance = cashBalance();
+    return `
+      <div class="stat-row"><div class="stat-card"><div class="stat-label">${ICONS.wallet}Kassada qalıq</div><div class="stat-value">${fmt(balance)}</div></div></div>
+      <div class="stat-row">
+        <div class="stat-card green"><div class="stat-label">Mədaxil</div><div class="stat-value">${fmt(totalIn)}</div></div>
+        <div class="stat-card red"><div class="stat-label">Kassadan çıxan</div><div class="stat-value">${fmt(totalOut)}</div></div>
+      </div>
+      <div class="section">
+        <div class="section-title">Yeni əməliyyat</div>
+        <div class="toggle-row">
+          <button class="toggle-btn active-green" id="kassaTypeIn" data-active="true">+ Kassaya qoyuldu</button>
+          <button class="toggle-btn" id="kassaTypeOut">− Kassadan götürüldü</button>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Məbləğ</label><input id="kassaAmount" type="number" inputmode="decimal" placeholder="0" /></div>
+          <div class="field"><label>Qeyd</label><input id="kassaNote" placeholder="məs. əlavə qoyuldu" /></div>
+        </div>
+        <button class="btn green" id="kassaSubmit">${ICONS.plus} Əlavə et</button>
+      </div>
+      <div class="section">
+        <div class="section-title">Kassa tarixçəsi</div>
+        ${
+          state.cashLog.length === 0
+            ? '<div class="empty">Hələlik boşdur</div>'
+            : [...state.cashLog].reverse().map((c) => `
+              <div class="list-row">
+                <div><div class="title">${esc(c.note || (c.type === "in" ? "Mədaxil" : "Çıxarış"))}</div><div class="meta">${esc(c.date)}</div></div>
+                <div class="right ${c.type === "in" ? "green" : "red"}">${c.type === "in" ? "+" : "−"}${fmt(c.sum)}</div>
+              </div>`).join("")
+        }
+      </div>
+    `;
+  }
+
+  let kassaType = "in";
+
+  // ---------- Purchases ----------
+  let purchaseType = NUT_TYPES[0];
+  function renderPurchasesTab() {
+    const today = todayISO();
+    const todays = state.purchases.filter((p) => p.date === today);
+    const todayKg = todays.reduce((s, p) => s + p.kg, 0);
+    const todaySum = todays.reduce((s, p) => s + p.sum, 0);
+    const todayBags = todays.reduce((s, p) => s + (p.bags || 0), 0);
+    return `
+      <div class="stat-row">
+        <div class="stat-card"><div class="stat-label">${ICONS.package}Bu gün alınıb</div><div class="stat-value">${fmt(todayKg)} kg</div></div>
+        <div class="stat-card green"><div class="stat-label">${ICONS.wallet}Bu günün məbləği</div><div class="stat-value">${fmt(todaySum)}</div></div>
+      </div>
+      <div class="stat-row"><div class="stat-card"><div class="stat-label">Bu gün kisə sayı</div><div class="stat-value">${fmt(todayBags)}</div></div></div>
+      <div class="section">
+        <div class="section-title">Yeni alış</div>
+        <div class="field-row"><div class="field"><label>Kim təhvil verdi (məcburi deyil)</label><input id="pSupplier" placeholder="Ad" /></div></div>
+        <div class="toggle-row">
+          ${NUT_TYPES.map((t) => `<button class="toggle-btn ${purchaseType === t ? "active-ink" : ""}" data-nut-type="${esc(t)}">${esc(t)}</button>`).join("")}
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Kq</label><input id="pKg" type="number" inputmode="decimal" placeholder="0" /></div>
+          <div class="field"><label>Kisə sayı</label><input id="pBags" type="number" inputmode="decimal" placeholder="0" /></div>
+        </div>
+        <div class="field-row"><div class="field"><label>Kq üçün qiymət</label><input id="pPrice" type="number" inputmode="decimal" placeholder="0" /></div></div>
+        <div id="pSumDisplay" style="text-align:center;font-size:14px;color:var(--ink);margin-bottom:10px;"></div>
+        <div class="field-row"><div class="field"><label>Qeyd</label><input id="pNote" placeholder="əlavə qeyd" /></div></div>
+        <button class="btn" id="pSubmit">${ICONS.plus} Alışı qeyd et</button>
+      </div>
+      <div class="section">
+        <div class="section-title">Qeydlər (${state.purchases.length})</div>
+        ${
+          state.purchases.length === 0
+            ? '<div class="empty">Hələlik boşdur</div>'
+            : [...state.purchases].reverse().map((p) => `
+              <div class="list-row">
+                <div>
+                  <div class="title">${esc(p.supplier)} — ${fmt(p.kg)} kq${p.bags ? " (" + p.bags + " kisə)" : ""} × ${fmt(p.price)} · ${esc(p.type || "")}</div>
+                  <div class="meta">${esc(p.date)}${p.note ? " · " + esc(p.note) : ""}</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <div class="right">${fmt(p.sum)}</div>
+                  <button class="del-btn" data-del-purchase="${p.id}">${ICONS.trash}</button>
+                </div>
+              </div>`).join("")
+        }
+      </div>
+    `;
+  }
+
+  // ---------- Expenses ----------
+  let expenseCategory = "";
+  function renderExpensesTab() {
+    const total = state.expenses.reduce((s, e) => s + e.sum, 0);
+    return `
+      <div class="stat-row"><div class="stat-card red"><div class="stat-label">${ICONS.receipt}Ümumi xərclər</div><div class="stat-value">${fmt(total)}</div></div></div>
+      <div class="section">
+        <div class="section-title">Yeni xərc</div>
+        <div style="margin-bottom:10px;">${QUICK_EXPENSE_CATS.map((c) => `<span class="chip ${expenseCategory === c ? "active" : ""}" data-cat="${esc(c)}">${esc(c)}</span>`).join("")}</div>
+        <div class="field-row"><div class="field"><label>Xərc maddəsi</label><input id="eCategory" value="${esc(expenseCategory)}" placeholder="məs. Yeşik xərci" /></div></div>
+        <div class="field-row"><div class="field"><label>Məbləğ</label><input id="eSum" type="number" inputmode="decimal" placeholder="0" /></div></div>
+        <div class="field-row"><div class="field"><label>Qeyd</label><input id="eNote" placeholder="məcburi deyil" /></div></div>
+        <button class="btn red" id="eSubmit">${ICONS.plus} Xərci qeyd et</button>
+      </div>
+      <div class="section">
+        <div class="section-title">Qeydlər (${state.expenses.length})</div>
+        ${
+          state.expenses.length === 0
+            ? '<div class="empty">Hələlik boşdur</div>'
+            : [...state.expenses].reverse().map((e) => `
+              <div class="list-row">
+                <div><div class="title">${esc(e.category)}</div><div class="meta">${esc(e.date)}${e.note ? " · " + esc(e.note) : ""}</div></div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <div class="right red">−${fmt(e.sum)}</div>
+                  <button class="del-btn" data-del-expense="${e.id}">${ICONS.trash}</button>
+                </div>
+              </div>`).join("")
+        }
+      </div>
+    `;
+  }
+
+  // ---------- Debts ----------
+  let debtDirection = "gave";
+  function renderDebtsTab() {
+    const active = state.debts.filter((d) => !d.paid);
+    const gaveTotal = active.filter((d) => d.direction === "gave").reduce((s, d) => s + d.sum, 0);
+    const tookTotal = active.filter((d) => d.direction === "took").reduce((s, d) => s + d.sum, 0);
+
+    const search = state.debtSearch.trim().toLowerCase();
+    const filtered = search ? state.debts.filter((d) => d.person.toLowerCase().includes(search)) : state.debts;
+
+    const byPerson = {};
+    active.forEach((d) => {
+      if (!byPerson[d.person]) byPerson[d.person] = { gave: 0, took: 0 };
+      byPerson[d.person][d.direction] += d.sum;
+    });
+    const debtors = Object.entries(byPerson).filter(([, v]) => v.gave > 0 || v.took > 0);
+
+    return `
+      <div class="stat-row">
+        <div class="stat-card green"><div class="stat-label">${ICONS.hand}Bizə borcludur</div><div class="stat-value">${fmt(gaveTotal)}</div></div>
+        <div class="stat-card red"><div class="stat-label">${ICONS.hand}Biz borcluyuq</div><div class="stat-value">${fmt(tookTotal)}</div></div>
+      </div>
+      <div class="section">
+        <div class="section-title">Yeni borc</div>
+        <div class="toggle-row">
+          <button class="toggle-btn ${debtDirection === "gave" ? "active-green" : ""}" data-debt-dir="gave">Borc verdim</button>
+          <button class="toggle-btn ${debtDirection === "took" ? "active-red" : ""}" data-debt-dir="took">Borc aldım</button>
+        </div>
+        <div class="field-row"><div class="field"><label>Ad</label><input id="dPerson" placeholder="Kimə / kimdən" /></div></div>
+        <div class="field-row"><div class="field"><label>Məbləğ</label><input id="dSum" type="number" inputmode="decimal" placeholder="0" /></div></div>
+        <div class="field-row"><div class="field"><label>Qeyd</label><input id="dNote" placeholder="məcburi deyil" /></div></div>
+        <button class="btn ${debtDirection === "gave" ? "green" : "red"}" id="dSubmit">${ICONS.plus} Borcu qeyd et</button>
+      </div>
+      ${
+        debtors.length
+          ? `<div class="section"><div class="section-title">Kimin borcu var (ödənilməmiş)</div>
+          ${debtors.map(([name, v]) => `
+            <div class="list-row">
+              <div class="title">${esc(name)}</div>
+              <div style="display:flex;gap:10px;">
+                ${v.gave > 0 ? `<span class="right green">+${fmt(v.gave)}</span>` : ""}
+                ${v.took > 0 ? `<span class="right red">−${fmt(v.took)}</span>` : ""}
+              </div>
+            </div>`).join("")}
+          </div>`
+          : ""
+      }
+      <div class="section">
+        <div class="section-title">Bütün borclar (${state.debts.length})</div>
+        <div class="field-row"><div class="field"><input id="dSearch" value="${esc(state.debtSearch)}" placeholder="Ada görə axtar…" /></div></div>
+        ${
+          filtered.length === 0
+            ? '<div class="empty">Nəticə yoxdur</div>'
+            : [...filtered].reverse().map((d) => `
+              <div class="list-row" style="opacity:${d.paid ? 0.45 : 1};">
+                <div>
+                  <div class="title" style="${d.paid ? "text-decoration:line-through;" : ""}">${esc(d.person)} ${d.direction === "gave" ? "(bizə borcludur)" : "(biz borcluyuq)"}</div>
+                  <div class="meta">${esc(d.date)}${d.note ? " · " + esc(d.note) : ""}</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <div class="right ${d.direction === "gave" ? "green" : "red"}">${fmt(d.sum)}</div>
+                  <button class="btn-outline" style="width:auto;padding:4px 8px;font-size:11px;" data-toggle-debt="${d.id}">${d.paid ? "Geri qaytar" : "Ödənildi"}</button>
+                  <button class="del-btn" data-del-debt="${d.id}">${ICONS.trash}</button>
+                </div>
+              </div>`).join("")
+        }
+      </div>
+    `;
+  }
+
+  // ---------- Attendance ----------
+  function renderAttendanceTab() {
+    const dayList = state.attendance.filter((a) => a.date === state.attendanceDate);
+    const knownNames = Array.from(new Set(state.attendance.map((a) => a.person))).sort();
+    return `
+      <div class="stat-row"><div class="stat-card"><div class="stat-label">${ICONS.package}Bu gün işdə olanlar</div><div class="stat-value">${dayList.length}</div></div></div>
+      <div class="section"><div class="section-title">Tarix</div>
+        <div class="field-row"><div class="field"><input id="attDate" type="date" value="${esc(state.attendanceDate)}" /></div></div>
+      </div>
+      <div class="section">
+        <div class="section-title">İşçi əlavə et</div>
+        <div class="field-row"><div class="field"><input id="attName" placeholder="Ad" /></div></div>
+        ${knownNames.length ? `<div style="margin-bottom:10px;">${knownNames.map((n) => `<span class="chip" data-known-name="${esc(n)}">${esc(n)}</span>`).join("")}</div>` : ""}
+        <button class="btn" id="attSubmit">${ICONS.plus} Davamiyyətə əlavə et</button>
+      </div>
+      <div class="section">
+        <div class="section-title">${esc(state.attendanceDate)} tarixində işdə olanlar (${dayList.length})</div>
+        ${
+          dayList.length === 0
+            ? '<div class="empty">Hələ heç kim əlavə edilməyib</div>'
+            : dayList.map((a) => `
+              <div class="list-row">
+                <div><div class="title">${esc(a.person)}</div><div class="meta">${esc(a.date)}</div></div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <div class="right green">✓</div>
+                  <button class="del-btn" data-del-att="${a.id}">${ICONS.trash}</button>
+                </div>
+              </div>`).join("")
+        }
+      </div>
+    `;
+  }
+
+  // ---------- Truck ----------
+  function renderTruckTab() {
+    const dayPurchases = state.purchases.filter((p) => p.date === state.truckDate);
+    const purchasedBySupplier = {};
+    dayPurchases.forEach((p) => { purchasedBySupplier[p.supplier] = (purchasedBySupplier[p.supplier] || 0) + p.kg; });
+
+    const validEntries = state.truckEntries.filter((e) => e.supplier.trim() && e.kg);
+    const totalKg = validEntries.reduce((s, e) => s + Number(e.kg || 0), 0);
+    const totalBags = validEntries.reduce((s, e) => s + Number(e.bags || 0), 0);
+
+    const dayLoads = state.truckLoads.filter((t) => t.date === state.truckDate);
+
+    let entriesHtml = state.truckEntries.map((e, idx) => {
+      const purchasedKg = e.supplier.trim() ? purchasedBySupplier[e.supplier.trim()] : undefined;
+      const diff = purchasedKg !== undefined && e.kg ? Number(e.kg) - purchasedKg : null;
+      return `
+        <div class="card-box" data-truck-row="${e.id}">
+          <div class="field-row">
+            <div class="field"><label>Kim təhvil verib</label><input class="truckSupplier" data-row="${e.id}" value="${esc(e.supplier)}" placeholder="Ad" /></div>
+            ${state.truckEntries.length > 1 ? `<button class="del-btn" style="align-self:flex-end;padding:10px 4px;" data-del-truck-row="${e.id}">${ICONS.trash}</button>` : ""}
+          </div>
+          <div class="field-row">
+            <div class="field"><label>Kq (çəkidə)</label><input class="truckKg" data-row="${e.id}" type="number" inputmode="decimal" value="${esc(e.kg)}" placeholder="0" /></div>
+            <div class="field"><label>Kisə sayı</label><input class="truckBags" data-row="${e.id}" type="number" inputmode="decimal" value="${esc(e.bags)}" placeholder="0" /></div>
+          </div>
+          ${
+            purchasedKg !== undefined
+              ? `<div style="font-size:12.5px;margin-top:2px;">
+                  <span style="color:var(--muted);">Alışda qeyd olunub: ${fmt(purchasedKg)} kq</span>
+                  ${diff !== null ? `<span style="margin-left:8px;font-weight:700;color:${Math.abs(diff) > 0.5 ? "var(--red)" : "var(--green)"};">${diff > 0 ? "+" : ""}${fmt(diff)} kq fərq</span>` : ""}
+                </div>`
+              : e.supplier.trim()
+              ? `<div style="font-size:12.5px;color:var(--red);margin-top:2px;">Bu adda alış qeydi tapılmadı</div>`
+              : ""
+          }
+        </div>
+      `;
+    }).join("");
+
+    let loadsHtml = dayLoads.map((t) => {
+      const loadKg = t.entries.reduce((s, e) => s + e.kg, 0);
+      const loadBags = t.entries.reduce((s, e) => s + e.bags, 0);
+      const rows = t.entries.map((e) => {
+        const purchasedKg = purchasedBySupplier[e.supplier];
+        const diff = purchasedKg !== undefined ? e.kg - purchasedKg : null;
+        return `<div style="font-size:13px;color:#2A2618;padding:4px 0;border-top:1px solid var(--line-soft);">
+          ${esc(e.supplier)} — ${fmt(e.kg)} kq${e.bags ? " (" + e.bags + " kisə)" : ""}
+          ${diff !== null && Math.abs(diff) > 0.001 ? `<span style="color:${Math.abs(diff) > 0.5 ? "var(--red)" : "var(--green)"};font-weight:700;"> (${diff > 0 ? "+" : ""}${fmt(diff)} kq fərq)</span>` : ""}
+        </div>`;
+      }).join("");
+      return `<div class="card-box">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+          <div style="font-weight:700;color:var(--ink);">${esc(t.driver)}</div>
+          <button class="del-btn" data-del-truck="${t.id}">${ICONS.trash}</button>
+        </div>
+        ${rows}
+        <div style="font-size:13px;font-weight:700;margin-top:6px;color:var(--ink);">Cəmi: ${fmt(loadKg)} kq · ${fmt(loadBags)} kisə</div>
+        ${t.note ? `<div style="font-size:12px;color:var(--muted);margin-top:4px;">${esc(t.note)}</div>` : ""}
+      </div>`;
+    }).join("");
+
+    return `
+      <div class="section"><div class="section-title">Tarix</div>
+        <div class="field-row"><div class="field"><input id="truckDate" type="date" value="${esc(state.truckDate)}" /></div></div>
+      </div>
+      <div class="section">
+        <div class="section-title">Yeni maşın yükü</div>
+        <div class="field-row"><div class="field"><label>Sürücü</label><input id="truckDriver" placeholder="Sürücünün adı" /></div></div>
+        ${entriesHtml}
+        <div style="margin-bottom:10px;"><button class="btn-outline" id="truckAddRow" style="border-style:dashed;">+ Sətir əlavə et</button></div>
+        <div class="field-row"><div class="field"><label>Qeyd</label><input id="truckNote" placeholder="məcburi deyil" /></div></div>
+        ${validEntries.length ? `<div style="text-align:center;font-size:14px;color:var(--ink);margin-bottom:10px;">Cəmi: <b>${fmt(totalKg)} kq</b> · <b>${fmt(totalBags)} kisə</b></div>` : ""}
+        <button class="btn" id="truckSubmit">${ICONS.plus} Maşını qeyd et</button>
+      </div>
+      <div class="section">
+        <div class="section-title">${esc(state.truckDate)} tarixində göndərilən maşınlar</div>
+        ${dayLoads.length === 0 ? '<div class="empty">Hələ maşın qeyd olunmayıb</div>' : loadsHtml}
+      </div>
+    `;
+  }
+
+  // ---------- Report ----------
+  function buildReportData(reportDate) {
+    const purchases = state.purchases.filter((p) => p.date === reportDate);
+    const expenses = state.expenses.filter((e) => e.date === reportDate);
+    const cashLog = state.cashLog.filter((c) => c.date === reportDate);
+    const debts = state.debts.filter((d) => d.date === reportDate);
+    const attendanceDay = state.attendance.filter((a) => a.date === reportDate);
+    const truckDay = state.truckLoads.filter((t) => t.date === reportDate);
+
+    const totalKg = purchases.reduce((s, p) => s + p.kg, 0);
+    const totalBags = purchases.reduce((s, p) => s + (p.bags || 0), 0);
+    const totalPurchaseSum = purchases.reduce((s, p) => s + p.sum, 0);
+    const totalExpenses = expenses.reduce((s, e) => s + e.sum, 0);
+    const cashIn = cashLog.filter((c) => c.type === "in").reduce((s, c) => s + c.sum, 0);
+    const cashOut = cashLog.filter((c) => c.type === "out").reduce((s, c) => s + c.sum, 0);
+    const truckTotalKg = truckDay.reduce((s, t) => s + t.entries.reduce((s2, e) => s2 + e.kg, 0), 0);
+    const truckTotalBags = truckDay.reduce((s, t) => s + t.entries.reduce((s2, e) => s2 + e.bags, 0), 0);
+
+    return { purchases, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalBags, totalPurchaseSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags };
+  }
+
+  function buildReportText(reportDate) {
+    const r = buildReportData(reportDate);
+    return `📋 ${reportDate} hesabatı
+
+👷 Davamiyyət: ${r.attendanceDay.length ? r.attendanceDay.map((a) => a.person).join(", ") : "qeyd yoxdur"} (${r.attendanceDay.length} nəfər)
+
+🌰 Qoz-fındıq alışı:
+${r.purchases.length ? r.purchases.map((p) => `• ${p.supplier}: ${fmt(p.kg)} kq${p.bags ? " (" + p.bags + " kisə)" : ""} × ${fmt(p.price)} = ${fmt(p.sum)} [${p.type || ""}]`).join("\n") : "qeyd yoxdur"}
+Cəmi: ${fmt(r.totalKg)} kq, ${fmt(r.totalBags)} kisə, məbləğ ${fmt(r.totalPurchaseSum)}
+
+💵 Kassa:
+Mədaxil: +${fmt(r.cashIn)}
+Kassadan çıxan: −${fmt(r.cashOut)}
+Kassada qalıq (indiki): ${fmt(cashBalance())}
+
+🧾 Xərclər:
+${r.expenses.length ? r.expenses.map((e) => `• ${e.category}: ${fmt(e.sum)}${e.note ? " (" + e.note + ")" : ""}`).join("\n") : "qeyd yoxdur"}
+Cəmi xərclər: ${fmt(r.totalExpenses)}
+
+🤝 Borclar (bu gün):
+${r.debts.length ? r.debts.map((d) => `• ${d.person}: ${fmt(d.sum)} — ${d.direction === "gave" ? "bizə borcludur" : "biz borcluyuq"}`).join("\n") : "yeni qeyd yoxdur"}
+
+🚚 Maşın:
+${r.truckDay.length ? r.truckDay.map((t) => `• Sürücü: ${t.driver} — ${fmt(t.entries.reduce((s, e) => s + e.kg, 0))} kq, ${fmt(t.entries.reduce((s, e) => s + e.bags, 0))} kisə`).join("\n") : "göndərilməyib"}
+${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.truckTotalBags)} kisə` : ""}`;
+  }
+
+  function renderReportTab() {
+    const reportText = buildReportText(state.reportDate);
+    return `
+      ${!isOwner() ? '<div class="viewer-note">Bu hesabatı yalnız görə bilərsiniz. Dəyişiklik etmək üçün giriş lazımdır.</div>' : ""}
+      <div class="section"><div class="section-title">Hesabat tarixi</div>
+        <div class="field-row"><div class="field"><input id="reportDate" type="date" value="${esc(state.reportDate)}" /></div></div>
+      </div>
+      <div class="report-box">${esc(reportText)}</div>
+      <div class="field-row" style="margin-bottom:10px;"><button class="btn green" id="reportWhatsapp">${ICONS.send} WhatsApp-a göndər</button></div>
+      <div style="margin-bottom:10px;"><button class="btn-outline" id="reportCopy">Mətni kopyala</button></div>
+      ${
+        isOwner()
+          ? `<div style="margin-top:18px;margin-bottom:6px;font-size:13px;font-weight:600;color:var(--ink-soft);">Excel (.xlsx) olaraq yüklə</div>
+             <div class="field-row" style="margin-bottom:10px;"><button class="btn" id="reportExcelDay">${ICONS.download} Günün hesabatı</button></div>
+             <div><button class="btn-outline" id="reportExcelAll">${ICONS.download} Bütün tarixçəni yüklə</button></div>`
+          : ""
+      }
+    `;
+  }
+
+  function downloadDayExcel(reportDate) {
+    const r = buildReportData(reportDate);
+    const wb = XLSX.utils.book_new();
+
+    const purchaseRows = r.purchases.map((p) => ({ Tarix: p.date, "Kim təhvil verdi": p.supplier, Kq: p.kg, "Kisə sayı": p.bags || 0, Növ: p.type || "", "Kq üçün qiymət": p.price, Məbləğ: p.sum, Qeyd: p.note || "" }));
+    if (purchaseRows.length) purchaseRows.push({ Tarix: "", "Kim təhvil verdi": "CƏMİ", Kq: r.totalKg, "Kisə sayı": r.totalBags, Növ: "", "Kq üçün qiymət": "", Məbləğ: r.totalPurchaseSum, Qeyd: "" });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(purchaseRows.length ? purchaseRows : [{ Tarix: reportDate, Qeyd: "qeyd yoxdur" }]), "Alışlar");
+
+    const expenseRows = r.expenses.map((e) => ({ Tarix: e.date, Maddə: e.category, Məbləğ: e.sum, Qeyd: e.note || "" }));
+    if (expenseRows.length) expenseRows.push({ Tarix: "", Maddə: "CƏMİ", Məbləğ: r.totalExpenses, Qeyd: "" });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(expenseRows.length ? expenseRows : [{ Tarix: reportDate, Qeyd: "qeyd yoxdur" }]), "Xərclər");
+
+    const cashRows = r.cashLog.map((c) => ({ Tarix: c.date, Növ: c.type === "in" ? "Mədaxil" : "Çıxarış", Məbləğ: c.sum, Qeyd: c.note || "" }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(cashRows.length ? cashRows : [{ Tarix: reportDate, Qeyd: "qeyd yoxdur" }]), "Kassa");
+
+    const debtRows = r.debts.map((d) => ({ Tarix: d.date, Ad: d.person, Məbləğ: d.sum, İstiqamət: d.direction === "gave" ? "Bizə borcludur" : "Biz borcluyuq", Ödənilib: d.paid ? "Bəli" : "Xeyr", Qeyd: d.note || "" }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(debtRows.length ? debtRows : [{ Tarix: reportDate, Qeyd: "qeyd yoxdur" }]), "Borclar");
+
+    const attendanceRows = r.attendanceDay.map((a) => ({ Tarix: a.date, Ad: a.person }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(attendanceRows.length ? attendanceRows : [{ Tarix: reportDate, Ad: "qeyd yoxdur" }]), "Davamiyyət");
+
+    const truckRows = [];
+    r.truckDay.forEach((t) => {
+      t.entries.forEach((e) => {
+        const purchasedKg = r.purchases.filter((p) => p.supplier === e.supplier).reduce((s, p) => s + p.kg, 0);
+        truckRows.push({ Tarix: t.date, Sürücü: t.driver, "Kim təhvil verib": e.supplier, "Maşında kq": e.kg, "Kisə sayı": e.bags, "Alışda qeyd olunan kq": purchasedKg || "", "Fərq (kq)": purchasedKg ? Number((e.kg - purchasedKg).toFixed(2)) : "" });
+      });
+    });
+    if (truckRows.length) truckRows.push({ Tarix: "", Sürücü: "CƏMİ", "Kim təhvil verib": "", "Maşında kq": r.truckTotalKg, "Kisə sayı": r.truckTotalBags, "Alışda qeyd olunan kq": "", "Fərq (kq)": "" });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(truckRows.length ? truckRows : [{ Tarix: reportDate, Sürücü: "qeyd yoxdur" }]), "Maşın");
+
+    const wsSummary = XLSX.utils.json_to_sheet([
+      { Göstərici: "Tarix", Dəyər: reportDate },
+      { Göstərici: "İşdə olanlar", Dəyər: r.attendanceDay.length },
+      { Göstərici: "Alınan miqdar (kq)", Dəyər: r.totalKg },
+      { Göstərici: "Alınan kisə sayı", Dəyər: r.totalBags },
+      { Göstərici: "Alış məbləği", Dəyər: r.totalPurchaseSum },
+      { Göstərici: "Xərclər cəmi", Dəyər: r.totalExpenses },
+      { Göstərici: "Kassaya mədaxil", Dəyər: r.cashIn },
+      { Göstərici: "Kassadan çıxan", Dəyər: r.cashOut },
+      { Göstərici: "Kassada qalıq (indiki)", Dəyər: cashBalance() },
+      { Göstərici: "Maşınla göndərilən (kq)", Dəyər: r.truckTotalKg },
+      { Göstərici: "Maşınla göndərilən (kisə)", Dəyər: r.truckTotalBags },
+    ]);
+    XLSX.utils.book_append_sheet(wb, wsSummary, "Xülasə");
+
+    XLSX.writeFile(wb, `hesabat_${reportDate}.xlsx`);
+  }
+
+  function downloadAllExcel() {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.purchases.map((p) => ({ Tarix: p.date, "Kim təhvil verdi": p.supplier, Kq: p.kg, "Kisə sayı": p.bags || 0, Növ: p.type || "", "Kq üçün qiymət": p.price, Məbləğ: p.sum, Qeyd: p.note || "" }))), "Alışlar");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.expenses.map((e) => ({ Tarix: e.date, Maddə: e.category, Məbləğ: e.sum, Qeyd: e.note || "" }))), "Xərclər");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.cashLog.map((c) => ({ Tarix: c.date, Növ: c.type === "in" ? "Mədaxil" : "Çıxarış", Məbləğ: c.sum, Qeyd: c.note || "" }))), "Kassa");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.debts.map((d) => ({ Tarix: d.date, Ad: d.person, Məbləğ: d.sum, İstiqamət: d.direction === "gave" ? "Bizə borcludur" : "Biz borcluyuq", Ödənilib: d.paid ? "Bəli" : "Xeyr", Qeyd: d.note || "" }))), "Borclar");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.attendance.map((a) => ({ Tarix: a.date, Ad: a.person }))), "Davamiyyət");
+    const truckRowsAll = [];
+    state.truckLoads.forEach((t) => {
+      t.entries.forEach((e) => {
+        const purchasedKg = state.purchases.filter((p) => p.date === t.date && p.supplier === e.supplier).reduce((s, p) => s + p.kg, 0);
+        truckRowsAll.push({ Tarix: t.date, Sürücü: t.driver, "Kim təhvil verib": e.supplier, "Maşında kq": e.kg, "Kisə sayı": e.bags, "Alışda qeyd olunan kq": purchasedKg || "", "Fərq (kq)": purchasedKg ? Number((e.kg - purchasedKg).toFixed(2)) : "" });
+      });
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(truckRowsAll.length ? truckRowsAll : [{ Tarix: "", Sürücü: "qeyd yoxdur" }]), "Maşın");
+    XLSX.writeFile(wb, `hamisi_${todayISO()}.xlsx`);
+  }
+
+  // ---------- Event wiring per tab ----------
+  function attachTabEvents() {
+    if (state.tab === "kassa") wireKassa();
+    else if (state.tab === "purchases") wirePurchases();
+    else if (state.tab === "expenses") wireExpenses();
+    else if (state.tab === "debts") wireDebts();
+    else if (state.tab === "attendance") wireAttendance();
+    else if (state.tab === "truck") wireTruck();
+    else if (state.tab === "report") wireReport();
+  }
+
+  function wireKassa() {
+    const btnIn = document.getElementById("kassaTypeIn");
+    const btnOut = document.getElementById("kassaTypeOut");
+    function refreshToggle() {
+      btnIn.className = "toggle-btn" + (kassaType === "in" ? " active-green" : "");
+      btnOut.className = "toggle-btn" + (kassaType === "out" ? " active-red" : "");
+    }
+    refreshToggle();
+    btnIn.onclick = () => { kassaType = "in"; refreshToggle(); document.getElementById("kassaSubmit").className = "btn green"; };
+    btnOut.onclick = () => { kassaType = "out"; refreshToggle(); document.getElementById("kassaSubmit").className = "btn red"; };
+    document.getElementById("kassaSubmit").onclick = async () => {
+      const amount = Number(document.getElementById("kassaAmount").value);
+      const note = document.getElementById("kassaNote").value;
+      if (!amount) return;
+      await addCashLog({ type: kassaType, sum: amount, note });
+    };
+  }
+
+  function wirePurchases() {
+    document.querySelectorAll("[data-nut-type]").forEach((btn) => {
+      btn.onclick = () => { purchaseType = btn.dataset.nutType; renderTabContent(); };
+    });
+    function updateSum() {
+      const kg = Number(document.getElementById("pKg").value) || 0;
+      const price = Number(document.getElementById("pPrice").value) || 0;
+      const sum = kg * price;
+      document.getElementById("pSumDisplay").innerHTML = sum > 0 ? `Məbləğ: <b>${fmt(sum)}</b>` : "";
+    }
+    document.getElementById("pKg").oninput = updateSum;
+    document.getElementById("pPrice").oninput = updateSum;
+    updateSum();
+    document.getElementById("pSubmit").onclick = async () => {
+      const kg = Number(document.getElementById("pKg").value);
+      const price = Number(document.getElementById("pPrice").value);
+      if (!kg || !price) return;
+      const supplier = document.getElementById("pSupplier").value.trim() || "Adsız";
+      const bags = Number(document.getElementById("pBags").value) || 0;
+      const note = document.getElementById("pNote").value;
+      await addPurchase({ supplier, kg, bags, type: purchaseType, price, sum: kg * price, note });
+    };
+    document.querySelectorAll("[data-del-purchase]").forEach((btn) => {
+      btn.onclick = () => deletePurchase(btn.dataset.delPurchase);
+    });
+  }
+
+  function wireExpenses() {
+    document.querySelectorAll("[data-cat]").forEach((chip) => {
+      chip.onclick = () => { expenseCategory = chip.dataset.cat; renderTabContent(); };
+    });
+    document.getElementById("eSubmit").onclick = async () => {
+      const category = document.getElementById("eCategory").value.trim();
+      const sum = Number(document.getElementById("eSum").value);
+      if (!category || !sum) return;
+      const note = document.getElementById("eNote").value;
+      expenseCategory = "";
+      await addExpense({ category, sum, note });
+    };
+    document.querySelectorAll("[data-del-expense]").forEach((btn) => {
+      btn.onclick = () => deleteExpense(btn.dataset.delExpense);
+    });
+  }
+
+  function wireDebts() {
+    document.querySelectorAll("[data-debt-dir]").forEach((btn) => {
+      btn.onclick = () => { debtDirection = btn.dataset.debtDir; renderTabContent(); };
+    });
+    document.getElementById("dSearch").oninput = (e) => { state.debtSearch = e.target.value; renderTabContent(); };
+    document.getElementById("dSubmit").onclick = async () => {
+      const person = document.getElementById("dPerson").value.trim();
+      const sum = Number(document.getElementById("dSum").value);
+      if (!person || !sum) return;
+      const note = document.getElementById("dNote").value;
+      await addDebt({ person, sum, direction: debtDirection, note });
+    };
+    document.querySelectorAll("[data-toggle-debt]").forEach((btn) => {
+      btn.onclick = () => toggleDebtPaid(btn.dataset.toggleDebt);
+    });
+    document.querySelectorAll("[data-del-debt]").forEach((btn) => {
+      btn.onclick = () => deleteDebtFn(btn.dataset.delDebt);
+    });
+  }
+
+  function wireAttendance() {
+    document.getElementById("attDate").onchange = (e) => { state.attendanceDate = e.target.value; renderTabContent(); };
+    document.querySelectorAll("[data-known-name]").forEach((chip) => {
+      chip.onclick = () => { document.getElementById("attName").value = chip.dataset.knownName; };
+    });
+    document.getElementById("attSubmit").onclick = async () => {
+      const name = document.getElementById("attName").value.trim();
+      if (!name) return;
+      const dayList = state.attendance.filter((a) => a.date === state.attendanceDate);
+      if (dayList.some((a) => a.person.toLowerCase() === name.toLowerCase())) return;
+      await addAttendance({ date: state.attendanceDate, person: name });
+    };
+    document.querySelectorAll("[data-del-att]").forEach((btn) => {
+      btn.onclick = () => removeAttendance(btn.dataset.delAtt);
+    });
+  }
+
+  function wireTruck() {
+    document.getElementById("truckDate").onchange = (e) => { state.truckDate = e.target.value; renderTabContent(); };
+    document.querySelectorAll(".truckSupplier").forEach((inp) => {
+      inp.oninput = (e) => {
+        const row = state.truckEntries.find((r) => r.id === e.target.dataset.row);
+        if (row) row.supplier = e.target.value;
+      };
+      inp.onblur = () => renderTabContent();
+    });
+    document.querySelectorAll(".truckKg").forEach((inp) => {
+      inp.oninput = (e) => {
+        const row = state.truckEntries.find((r) => r.id === e.target.dataset.row);
+        if (row) row.kg = e.target.value;
+      };
+      inp.onblur = () => renderTabContent();
+    });
+    document.querySelectorAll(".truckBags").forEach((inp) => {
+      inp.oninput = (e) => {
+        const row = state.truckEntries.find((r) => r.id === e.target.dataset.row);
+        if (row) row.bags = e.target.value;
+      };
+    });
+    document.querySelectorAll("[data-del-truck-row]").forEach((btn) => {
+      btn.onclick = () => {
+        state.truckEntries = state.truckEntries.filter((r) => r.id !== btn.dataset.delTruckRow);
+        renderTabContent();
+      };
+    });
+    document.getElementById("truckAddRow").onclick = () => {
+      state.truckEntries.push({ id: uid(), supplier: "", kg: "", bags: "" });
+      renderTabContent();
+    };
+    document.getElementById("truckSubmit").onclick = async () => {
+      const driver = document.getElementById("truckDriver").value.trim();
+      const note = document.getElementById("truckNote").value;
+      const validEntries = state.truckEntries.filter((e) => e.supplier.trim() && e.kg);
+      if (!driver || validEntries.length === 0) return;
+      await addTruckLoad({
+        date: state.truckDate,
+        driver,
+        note,
+        entries: validEntries.map((e) => ({ supplier: e.supplier.trim(), kg: Number(e.kg), bags: Number(e.bags) || 0 })),
+      });
+      state.truckEntries = [{ id: uid(), supplier: "", kg: "", bags: "" }];
+      renderTabContent();
+    };
+    document.querySelectorAll("[data-del-truck]").forEach((btn) => {
+      btn.onclick = () => deleteTruckLoad(btn.dataset.delTruck);
+    });
+  }
+
+  function wireReport() {
+    document.getElementById("reportDate").onchange = (e) => { state.reportDate = e.target.value; renderTabContent(); };
+    document.getElementById("reportWhatsapp").onclick = () => {
+      const text = buildReportText(state.reportDate);
+      window.open("https://wa.me/?text=" + encodeURIComponent(text), "_blank");
+    };
+    document.getElementById("reportCopy").onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(buildReportText(state.reportDate));
+        alert("Hesabat kopyalandı");
+      } catch (e) {
+        alert("Kopyalamaq mümkün olmadı");
+      }
+    };
+    const excelDayBtn = document.getElementById("reportExcelDay");
+    if (excelDayBtn) excelDayBtn.onclick = () => downloadDayExcel(state.reportDate);
+    const excelAllBtn = document.getElementById("reportExcelAll");
+    if (excelAllBtn) excelAllBtn.onclick = () => downloadAllExcel();
+  }
+
+  // ---------- Boot ----------
+  if (!firebaseReady) {
+    document.getElementById("app").innerHTML = '<div class="loading-screen">Firebase qoşulmadı. İnternet bağlantısını yoxlayın.</div>';
+  } else {
+    auth.onAuthStateChanged((user) => {
+      state.user = user;
+      state.authLoading = false;
+      render();
+    });
+    initListeners();
+    render();
+  }
+})();
+</script>
