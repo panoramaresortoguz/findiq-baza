@@ -513,7 +513,7 @@
       const sum = Number(get("sum"));
       if (!kg || !sum) return null;
       let type = String(get("type") || "").trim();
-      if (!NUT_TYPES.includes(type)) type = NUT_TYPES[0];
+      if (!type) type = "Digər";
       const who = String(get("who") || "").trim() || "Müştəri";
       const base = { date: parseDateCell(dateRaw, todayISO()), time: parseTimeCell(idx.time !== undefined ? row[idx.time] : null), kg, type, sum, note: String(get("note") || "").trim() };
       return key === "alislar" ? { ...base, supplier: who, price: Number((sum / kg).toFixed(2)) } : { ...base, buyer: who };
@@ -549,7 +549,7 @@
       const sum = Number(get("sum"));
       if (!driver || !kg || !sum) return null;
       let type = String(get("type") || "").trim();
-      if (!NUT_TYPES.includes(type)) type = NUT_TYPES[0];
+      if (!type) type = "Digər";
       const paidNorm = normalizeHeader(get("paid"));
       const paid = paidNorm.startsWith("bel");
       return {
@@ -718,7 +718,7 @@
         }
         const buyer = idx.buyer !== undefined ? String(row[idx.buyer] || "").trim() : "";
         let type = idx.type !== undefined ? String(row[idx.type] || "").trim() : "";
-        if (!NUT_TYPES.includes(type)) type = NUT_TYPES[0];
+        if (!type) type = "Digər";
         const note = idx.note !== undefined ? String(row[idx.note] || "").trim() : "";
         parsed.push({ date, time, buyer: buyer || "Müştəri", kg, type, sum, note });
       }
@@ -1039,6 +1039,15 @@
   function renderTabContent() {
     const el = document.getElementById("tabContent");
     if (!el) return;
+
+    // Re-rendering replaces the whole tab's HTML, which would normally kick the cursor
+    // out of whatever input the person is typing in. Remember where the cursor was and
+    // put it straight back after the new HTML is in place.
+    const active = document.activeElement;
+    const activeId = active && active.id ? active.id : null;
+    const selStart = active && typeof active.selectionStart === "number" ? active.selectionStart : null;
+    const selEnd = active && typeof active.selectionEnd === "number" ? active.selectionEnd : null;
+
     if (state.tab === "report") el.innerHTML = renderReportTab();
     else if (state.tab === "kassa" && isOwner()) el.innerHTML = renderKassaTab();
     else if (state.tab === "purchases" && isOwner()) el.innerHTML = renderPurchasesTab();
@@ -1050,6 +1059,16 @@
     else if (state.tab === "drivers" && isOwner()) el.innerHTML = renderDriversTab();
     else el.innerHTML = renderReportTab();
     attachTabEvents();
+
+    if (activeId) {
+      const restored = document.getElementById(activeId);
+      if (restored) {
+        restored.focus();
+        if (selStart !== null && restored.setSelectionRange) {
+          try { restored.setSelectionRange(selStart, selEnd); } catch (e) {}
+        }
+      }
+    }
   }
 
   // ---------- Kassa ----------
@@ -1270,7 +1289,8 @@
       if (!byPerson[d.person]) byPerson[d.person] = { gave: 0, took: 0 };
       byPerson[d.person][d.direction] += d.sum;
     });
-    const debtors = Object.entries(byPerson).filter(([, v]) => v.gave > 0 || v.took > 0);
+    const debtors = Object.entries(byPerson)
+      .map(([name, v]) => [name, Number((v.gave - v.took).toFixed(2))]);
 
     const allPersonNames = Array.from(new Set(state.debts.map((d) => d.person))).sort();
     const matchingPersons = search ? allPersonNames.filter((p) => p.toLowerCase().includes(search)) : [];
@@ -1332,14 +1352,11 @@
       </div>
       ${
         debtors.length
-          ? `<div class="section"><div class="section-title">Kimin borcu var (ödənilməmiş)</div>
-          ${debtors.map(([name, v]) => `
+          ? `<div class="section"><div class="section-title">Kimin borcu var</div>
+          ${debtors.map(([name, net]) => `
             <div class="list-row">
               <div class="title">${esc(name)}</div>
-              <div style="display:flex;gap:10px;">
-                ${v.gave > 0 ? `<span class="right green">+${fmt(v.gave)}</span>` : ""}
-                ${v.took > 0 ? `<span class="right red">−${fmt(v.took)}</span>` : ""}
-              </div>
+              <div class="right ${net > 0 ? "green" : net < 0 ? "red" : ""}" style="${net === 0 ? "color:var(--muted);" : ""}">${net > 0 ? "+" : ""}${fmt(net)}</div>
             </div>`).join("")}
           </div>`
           : ""
