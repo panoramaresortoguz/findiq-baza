@@ -1302,6 +1302,14 @@
                   <div style="margin-top:10px;padding-top:8px;border-top:1.5px solid var(--line);font-weight:700;color:${ledger.finalBalance > 0 ? "var(--green)" : ledger.finalBalance < 0 ? "var(--red)" : "var(--ink)"};">
                     Cari qalıq: ${fmt(ledger.finalBalance)}${ledger.finalBalance > 0 ? " (bizə borcludur)" : ledger.finalBalance < 0 ? " (biz ona borcluyuq)" : ""}
                   </div>
+                  ${
+                    ledger.finalBalance !== 0
+                      ? `<div class="field-row" style="margin-top:10px;">
+                          <div class="field"><input class="ledgerRepaySum" type="number" inputmode="decimal" placeholder="Qaytarılan məbləğ" /></div>
+                          <button class="btn-outline" style="width:auto;padding:9px 16px;flex-shrink:0;" data-repay-person="${esc(personName)}">${ledger.finalBalance > 0 ? "Aldım" : "Verdim"}</button>
+                        </div>`
+                      : ""
+                  }
                 </div>`;
               }).join("")
             : search
@@ -2083,6 +2091,17 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     });
     document.querySelectorAll("[data-del-debt]").forEach((btn) => {
       btn.onclick = () => deleteDebtFn(btn.dataset.delDebt);
+    });
+    document.querySelectorAll("[data-repay-person]").forEach((btn) => {
+      btn.onclick = async () => {
+        const person = btn.dataset.repayPerson;
+        const input = btn.closest(".card-box").querySelector(".ledgerRepaySum");
+        const sum = Number(input.value);
+        if (!sum) return;
+        const ledger = buildPersonDebtLedger(person);
+        const direction = ledger.finalBalance > 0 ? "took" : "gave";
+        await addDebt({ person, sum, direction, note: "Qaytarma" });
+      };
     });
   }
 
