@@ -205,6 +205,28 @@
 
   const NUT_TYPES = ["Pasos", "Əl fındığı", "Digər"];
   const FUEL_TYPES = ["Dizel", "Benzin"];
+  const CASH_SOURCE_LABELS = {
+    purchase: "Alışlara",
+    sale: "Satışlardan",
+    expense: "Xərclərə",
+    debt_gave: "Borc verilib",
+    debt_took: "Borc alınıb",
+    debt_repay: "Borc qaytarılması",
+    manual: "Əl ilə əlavə/çıxarış",
+    driver_advance: "Sürücüyə avans",
+    driver_settle: "Sürücü hesabı",
+    adjustment: "Düzəliş",
+  };
+  function buildCashBreakdown(entries) {
+    const byIn = {};
+    const byOut = {};
+    entries.forEach((c) => {
+      const key = c.source || "manual";
+      const bucket = c.type === "in" ? byIn : byOut;
+      bucket[key] = (bucket[key] || 0) + c.sum;
+    });
+    return { in: byIn, out: byOut };
+  }
   const QUICK_EXPENSE_CATS = ["Kirayə", "Nəqliyyat", "Sənəd/pasport", "Təmizlik", "İnventar", "Əmək haqqı"];
 
   function normalizeHeader(h) {
@@ -386,14 +408,14 @@
     if (record && record.cashLogId) {
       await deleteDoc("cashLog", record.cashLogId);
     } else if (record) {
-      await logCash(todayISO(), fallbackType, record.sum, fallbackNote);
+      await logCash(todayISO(), fallbackType, record.sum, fallbackNote, { source: "adjustment" });
     }
   }
 
   async function addPurchase(p) {
     const date = p.date || todayISO();
     const time = p.time || nowTime();
-    const cashRef = await logCash(date, "out", p.sum, "Alış: " + p.supplier);
+    const cashRef = await logCash(date, "out", p.sum, "Alış: " + p.supplier, { source: "purchase" });
     const entry = { ...p, date, time, cashLogId: cashRef ? cashRef.id : null, ts: Date.now() };
     await addDoc("purchases", entry);
   }
@@ -406,7 +428,7 @@
   async function addSale(s) {
     const date = s.date || todayISO();
     const time = s.time || nowTime();
-    const cashRef = await logCash(date, "in", s.sum, "Satış: " + s.buyer);
+    const cashRef = await logCash(date, "in", s.sum, "Satış: " + s.buyer, { source: "sale" });
     const entry = { ...s, date, time, cashLogId: cashRef ? cashRef.id : null, ts: Date.now() };
     await addDoc("sales", entry);
   }
@@ -491,7 +513,7 @@
       if (!kg || !sum) return null;
       let type = String(get("type") || "").trim();
       if (!NUT_TYPES.includes(type)) type = NUT_TYPES[0];
-      const who = String(get("who") || "").trim() || "Adsız";
+      const who = String(get("who") || "").trim() || "Müştəri";
       const base = { date: parseDateCell(dateRaw, todayISO()), time: parseTimeCell(idx.time !== undefined ? row[idx.time] : null), kg, type, sum, note: String(get("note") || "").trim() };
       return key === "alislar" ? { ...base, supplier: who, price: Number((sum / kg).toFixed(2)) } : { ...base, buyer: who };
     }
@@ -697,7 +719,7 @@
         let type = idx.type !== undefined ? String(row[idx.type] || "").trim() : "";
         if (!NUT_TYPES.includes(type)) type = NUT_TYPES[0];
         const note = idx.note !== undefined ? String(row[idx.note] || "").trim() : "";
-        parsed.push({ date, time, buyer: buyer || "Adsız", kg, type, sum, note });
+        parsed.push({ date, time, buyer: buyer || "Müştəri", kg, type, sum, note });
       }
       state.salesImportPending = parsed;
       state.salesImportSkipped = skipped;
@@ -715,7 +737,7 @@
     for (let i = 0; i < rows.length; i++) {
       if (btn) btn.textContent = `Yüklənir… (${i + 1}/${rows.length})`;
       const r = rows[i];
-      const cashRef = await logCash(r.date, "in", r.sum, "Satış: " + r.buyer);
+      const cashRef = await logCash(r.date, "in", r.sum, "Satış: " + r.buyer, { source: "sale" });
       await addDoc("sales", { date: r.date, time: r.time, buyer: r.buyer, kg: r.kg, type: r.type, sum: r.sum, note: r.note, cashLogId: cashRef ? cashRef.id : null, ts: Date.now() });
     }
     state.salesImportPending = [];
@@ -727,7 +749,7 @@
 
   async function addExpense(e) {
     const date = e.date || todayISO();
-    const cashRef = await logCash(date, "out", e.sum, e.category);
+    const cashRef = await logCash(date, "out", e.sum, e.category, { source: "expense" });
     const entry = { ...e, date, cashLogId: cashRef ? cashRef.id : null, ts: Date.now() };
     await addDoc("expenses", entry);
   }
@@ -741,9 +763,9 @@
     const date = d.date || todayISO();
     let cashRef;
     if (d.direction === "gave") {
-      cashRef = await logCash(date, "out", d.sum, "Borc: " + d.person);
+      cashRef = await logCash(date, "out", d.sum, "Borc: " + d.person, { source: "debt_gave" });
     } else {
-      cashRef = await logCash(date, "in", d.sum, "Borc alındı: " + d.person);
+      cashRef = await logCash(date, "in", d.sum, "Borc alındı: " + d.person, { source: "debt_took" });
     }
     const entry = { paid: false, ...d, date, cashLogId: cashRef ? cashRef.id : null, ts: Date.now() };
     await addDoc("debts", entry);
@@ -755,7 +777,7 @@
       // Marking as paid: money actually moves — reflect it in the cash register
       const type = d.direction === "gave" ? "in" : "out";
       const note = "Borc qaytarıldı: " + d.person;
-      const cashRef = await logCash(todayISO(), type, d.sum, note);
+      const cashRef = await logCash(todayISO(), type, d.sum, note, { source: "debt_repay" });
       await updateDoc("debts", id, { paid: true, repayCashLogId: cashRef ? cashRef.id : null });
     } else {
       // Undo: remove the repayment's cash effect
@@ -773,7 +795,7 @@
   }
 
   async function addCashLog(c) {
-    await logCash(todayISO(), c.type, c.sum, c.note, { manual: true });
+    await logCash(todayISO(), c.type, c.sum, c.note, { manual: true, source: "manual" });
   }
   async function deleteCashLog(id) {
     await deleteDoc("cashLog", id);
@@ -840,7 +862,7 @@
 
   async function addDriverAdvance(a) {
     const date = a.date || todayISO();
-    const cashRef = await logCash(date, "out", a.sum, "Sürücüyə avans: " + a.driver);
+    const cashRef = await logCash(date, "out", a.sum, "Sürücüyə avans: " + a.driver, { source: "driver_advance" });
     await addDoc("driverAdvances", { date, driver: a.driver, sum: a.sum, note: a.note || "", cashLogId: cashRef ? cashRef.id : null, ts: Date.now() });
   }
   async function deleteDriverAdvance(id) {
@@ -859,6 +881,18 @@
   }
   async function deleteDriverPurchase(id) {
     await deleteDoc("driverPurchases", id);
+  }
+
+  // Builds a chronological ledger for one person's debts: every entry plus the running
+  // balance after it, so "gave 500, got back 200" reads as a clear timeline ending at 300.
+  function buildPersonDebtLedger(personName) {
+    const entries = sortByTs(state.debts.filter((d) => d.person.toLowerCase() === personName.toLowerCase()));
+    let balance = 0;
+    const timeline = entries.map((d) => {
+      balance += d.direction === "gave" ? d.sum : -d.sum;
+      return { ...d, runningBalance: balance };
+    });
+    return { person: personName, timeline, finalBalance: Number(balance.toFixed(2)) };
   }
 
   function buildDriverSummaries(date) {
@@ -881,9 +915,9 @@
   async function settleDriver(driver, date, remaining) {
     let cashRef = null;
     if (remaining > 0) {
-      cashRef = await logCash(todayISO(), "in", remaining, "Sürücü qaytardı: " + driver);
+      cashRef = await logCash(todayISO(), "in", remaining, "Sürücü qaytardı: " + driver, { source: "driver_settle" });
     } else if (remaining < 0) {
-      cashRef = await logCash(todayISO(), "out", Math.abs(remaining), "Sürücüyə ödənildi: " + driver);
+      cashRef = await logCash(todayISO(), "out", Math.abs(remaining), "Sürücüyə ödənildi: " + driver, { source: "driver_settle" });
     }
     await addDoc("driverSettlements", { date, driver, sum: Math.abs(remaining), direction: remaining >= 0 ? "return" : "reimburse", cashLogId: cashRef ? cashRef.id : null });
   }
@@ -1022,11 +1056,24 @@
     const totalIn = state.cashLog.filter((c) => c.type === "in").reduce((s, c) => s + c.sum, 0);
     const totalOut = state.cashLog.filter((c) => c.type === "out").reduce((s, c) => s + c.sum, 0);
     const balance = cashBalance();
+    const breakdown = buildCashBreakdown(state.cashLog);
     return `
       <div class="stat-row"><div class="stat-card"><div class="stat-label">${ICONS.wallet}Kassada qalıq</div><div class="stat-value">${fmt(balance)}</div></div></div>
       <div class="stat-row">
         <div class="stat-card green"><div class="stat-label">Mədaxil</div><div class="stat-value">${fmt(totalIn)}</div></div>
         <div class="stat-card red"><div class="stat-label">Kassadan çıxan</div><div class="stat-value">${fmt(totalOut)}</div></div>
+      </div>
+      <div class="section">
+        <div class="section-title">Mədaxil haradan</div>
+        ${Object.entries(breakdown.in).length === 0 ? '<div class="empty">Hələlik boşdur</div>' : Object.entries(breakdown.in).map(([src, sum]) => `
+          <div class="list-row"><div class="title">${esc(CASH_SOURCE_LABELS[src] || src)}</div><div class="right green">+${fmt(sum)}</div></div>
+        `).join("")}
+      </div>
+      <div class="section">
+        <div class="section-title">Çıxan haraya</div>
+        ${Object.entries(breakdown.out).length === 0 ? '<div class="empty">Hələlik boşdur</div>' : Object.entries(breakdown.out).map(([src, sum]) => `
+          <div class="list-row"><div class="title">${esc(CASH_SOURCE_LABELS[src] || src)}</div><div class="right red">−${fmt(sum)}</div></div>
+        `).join("")}
       </div>
       <div class="section">
         <div class="section-title">Yeni əməliyyat</div>
@@ -1221,21 +1268,55 @@
     });
     const debtors = Object.entries(byPerson).filter(([, v]) => v.gave > 0 || v.took > 0);
 
+    const allPersonNames = Array.from(new Set(state.debts.map((d) => d.person))).sort();
+    const matchingPersons = search ? allPersonNames.filter((p) => p.toLowerCase().includes(search)) : [];
+
     return `
       <div class="stat-row">
         <div class="stat-card green"><div class="stat-label">${ICONS.hand}Bizə borcludur</div><div class="stat-value">${fmt(gaveTotal)}</div></div>
         <div class="stat-card red"><div class="stat-label">${ICONS.hand}Biz borcluyuq</div><div class="stat-value">${fmt(tookTotal)}</div></div>
       </div>
+
+      <div class="section">
+        <div class="section-title">Şəxs üzrə axtarış</div>
+        <div class="field-row"><div class="field"><input id="dSearch" value="${esc(state.debtSearch)}" list="debtPersonsList" placeholder="Ad yaz — məs. Anton" /></div></div>
+        <datalist id="debtPersonsList">${allPersonNames.map((p) => `<option value="${esc(p)}"></option>`).join("")}</datalist>
+        ${
+          matchingPersons.length
+            ? matchingPersons.map((personName) => {
+                const ledger = buildPersonDebtLedger(personName);
+                return `<div class="card-box">
+                  <div style="font-weight:700;color:var(--ink);margin-bottom:8px;">${esc(personName)} — hesab tarixçəsi</div>
+                  ${ledger.timeline.map((t) => `
+                    <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:5px 0;border-top:1px solid var(--line-soft);">
+                      <div>${esc(t.date)}${t.time ? " · " + esc(t.time) : ""} — ${t.direction === "gave" ? "borc verildi" : "qaytarıldı / alındı"}${t.note ? " (" + esc(t.note) + ")" : ""}</div>
+                      <div style="text-align:right;flex-shrink:0;margin-left:8px;">
+                        <div style="font-weight:700;color:${t.direction === "gave" ? "var(--red)" : "var(--green)"};">${t.direction === "gave" ? "+" : "−"}${fmt(t.sum)}</div>
+                        <div style="font-size:11px;color:var(--muted);">qalıq ${fmt(t.runningBalance)}</div>
+                      </div>
+                    </div>`).join("")}
+                  <div style="margin-top:10px;padding-top:8px;border-top:1.5px solid var(--line);font-weight:700;color:${ledger.finalBalance > 0 ? "var(--green)" : ledger.finalBalance < 0 ? "var(--red)" : "var(--ink)"};">
+                    Cari qalıq: ${fmt(ledger.finalBalance)}${ledger.finalBalance > 0 ? " (bizə borcludur)" : ledger.finalBalance < 0 ? " (biz ona borcluyuq)" : ""}
+                  </div>
+                </div>`;
+              }).join("")
+            : search
+            ? '<div class="empty">Bu adda heç kim tapılmadı</div>'
+            : ""
+        }
+      </div>
+
       <div class="section">
         <div class="section-title">Yeni borc</div>
         <div class="toggle-row">
           <button class="toggle-btn ${debtDirection === "gave" ? "active-green" : ""}" data-debt-dir="gave">Borc verdim</button>
           <button class="toggle-btn ${debtDirection === "took" ? "active-red" : ""}" data-debt-dir="took">Borc aldım</button>
         </div>
-        <div class="field-row"><div class="field"><label>Ad</label><input id="dPerson" placeholder="Kimə / kimdən" /></div></div>
+        <div class="field-row"><div class="field"><label>Ad</label><input id="dPerson" list="debtPersonsList" placeholder="Kimə / kimdən" /></div></div>
         <div class="field-row"><div class="field"><label>Məbləğ</label><input id="dSum" type="number" inputmode="decimal" placeholder="0" /></div></div>
         <div class="field-row"><div class="field"><label>Qeyd</label><input id="dNote" placeholder="məcburi deyil" /></div></div>
         <button class="btn ${debtDirection === "gave" ? "green" : "red"}" id="dSubmit">${ICONS.plus} Borcu qeyd et</button>
+        <div class="time-note">Qismən qaytarma üçün: eyni adla "Borc aldım" seçib qaytarılan məbləği yaz — qalıq özü hesablanacaq.</div>
       </div>
       ${
         debtors.length
@@ -1253,7 +1334,6 @@
       }
       <div class="section">
         <div class="section-title">Bütün borclar (${state.debts.length})</div>
-        <div class="field-row"><div class="field"><input id="dSearch" value="${esc(state.debtSearch)}" placeholder="Ada görə axtar…" /></div></div>
         ${
           filtered.length === 0
             ? '<div class="empty">Nəticə yoxdur</div>'
@@ -1650,8 +1730,9 @@
     const fuelByTractorist = {};
     fuelDay.forEach((f) => { fuelByTractorist[f.tractorist] = (fuelByTractorist[f.tractorist] || 0) + f.liters; });
     const fuelTotalLiters = fuelDay.reduce((s, f) => s + f.liters, 0);
+    const cashBreakdown = buildCashBreakdown(cashLog);
 
-    return { purchases, sales, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalPurchaseSum, totalSalesKg, totalSalesSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags, driverAdvancesDay, driverPurchasesDay, driverSummaries, fuelDay, fuelByTractorist, fuelTotalLiters };
+    return { purchases, sales, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalPurchaseSum, totalSalesKg, totalSalesSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags, driverAdvancesDay, driverPurchasesDay, driverSummaries, fuelDay, fuelByTractorist, fuelTotalLiters, cashBreakdown };
   }
 
   function buildReportText(reportDate) {
@@ -1686,8 +1767,8 @@ Cəmi: ${fmt(r.totalSalesKg)} kq, məbləğ ${fmt(r.totalSalesSum)}
 ${r.driverSummaries.length ? r.driverSummaries.map((d) => `• ${d.driver}: avans ${fmt(d.advance)}, aldığı ${fmt(d.kg)} kq / ${fmt(d.bags)} kisə / ${fmt(d.spent)} manat — qalıq ${fmt(d.remaining)}${d.settled ? " (bağlıdır)" : ""}`).join("\n") : "qeyd yoxdur"}
 
 💵 Kassa:
-Mədaxil: +${fmt(r.cashIn)}
-Kassadan çıxan: −${fmt(r.cashOut)}
+Mədaxil: +${fmt(r.cashIn)}${Object.entries(r.cashBreakdown.in).map(([src, sum]) => `\n  · ${CASH_SOURCE_LABELS[src] || src}: +${fmt(sum)}`).join("")}
+Kassadan çıxan: −${fmt(r.cashOut)}${Object.entries(r.cashBreakdown.out).map(([src, sum]) => `\n  · ${CASH_SOURCE_LABELS[src] || src}: −${fmt(sum)}`).join("")}
 Kassada qalıq (indiki): ${fmt(cashBalance())}
 
 🧾 Xərclər:
@@ -1950,7 +2031,7 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
       const kg = Number(document.getElementById("pKg").value);
       const sum = Number(document.getElementById("pSum").value);
       if (!kg || !sum) return;
-      const supplier = document.getElementById("pSupplier").value.trim() || "Adsız";
+      const supplier = document.getElementById("pSupplier").value.trim() || "Müştəri";
       const note = document.getElementById("pNote").value;
       const price = Number((sum / kg).toFixed(2));
       await addPurchase({ supplier, kg, type: purchaseType, price, sum, note });
@@ -1968,7 +2049,7 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
       const kg = Number(document.getElementById("sKg").value);
       const sum = Number(document.getElementById("sSum").value);
       if (!kg || !sum) return;
-      const buyer = document.getElementById("sBuyer").value.trim() || "Adsız";
+      const buyer = document.getElementById("sBuyer").value.trim() || "Müştəri";
       const note = document.getElementById("sNote").value;
       await addSale({ buyer, kg, type: saleType, sum, note });
     };
