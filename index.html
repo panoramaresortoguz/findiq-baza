@@ -227,6 +227,12 @@
     });
     return { in: byIn, out: byOut };
   }
+  // Driver advances/settlements just move cash out to a driver and back — they're not real
+  // income or spending, and already have their own line in the Sürücülər section, so they're
+  // excluded from "today's" Mədaxil/Kassadan çıxan totals to avoid double-counting.
+  function reportableCash(entries) {
+    return entries.filter((c) => c.source !== "driver_advance" && c.source !== "driver_settle");
+  }
   const QUICK_EXPENSE_CATS = ["Xidmət", "Yemək", "Digər xərc"];
 
   function normalizeHeader(h) {
@@ -416,9 +422,16 @@
   async function addPurchase(p) {
     const date = p.date || todayISO();
     const time = p.time || nowTime();
-    const cashRef = await logCash(date, "out", p.sum, "Alış: " + p.supplier, { source: "purchase" });
-    const entry = { ...p, date, time, cashLogId: cashRef ? cashRef.id : null, ts: Date.now() };
+    const paidNow = p.paidNow !== undefined && p.paidNow !== null && p.paidNow !== "" ? Number(p.paidNow) : p.sum;
+    const cashRef = await logCash(date, "out", paidNow, "Alış: " + p.supplier, { source: "purchase" });
+    const entry = { ...p, date, time, paidNow, cashLogId: cashRef ? cashRef.id : null, ts: Date.now() };
     await addDoc("purchases", entry);
+    const remainder = Number((p.sum - paidNow).toFixed(2));
+    if (remainder > 0 && p.supplier) {
+      // The unpaid part of a purchase is money we owe the supplier for goods already
+      // received — not cash we borrowed, so it becomes a debt with no cash effect of its own.
+      await addDebtNoCash({ person: p.supplier, sum: remainder, direction: "took", note: "Alış qalığı (" + date + ")" });
+    }
   }
   async function deletePurchase(id) {
     const p = state.purchases.find((x) => x.id === id);
@@ -465,7 +478,7 @@
 
   // ---------- Master daily bulk import (one Excel file, many sheets) ----------
   const MASTER_SHEET_DEFS = [
-    { key: "alislar", sheetName: "Alışlar", headers: ["Tarix", "Vaxt", "Kim", "Kq", "Növ", "Məbləğ", "Qeyd"], example: ["", "10:00", "Nümunə Ad", 50, "Pasos", 175, ""] },
+    { key: "alislar", sheetName: "Alışlar", headers: ["Tarix", "Vaxt", "Kim", "Kq", "Növ", "Məbləğ", "Kassadan ödənilən", "Qeyd"], example: ["", "10:00", "Nümunə Ad", 50, "Pasos", 175, 175, ""] },
     { key: "satislar", sheetName: "Satışlar", headers: ["Tarix", "Vaxt", "Kim", "Kq", "Növ", "Məbləğ", "Qeyd"], example: ["", "16:00", "Nümunə Ad", 20, "Pasos", 70, ""] },
     { key: "xercler", sheetName: "Xərclər", headers: ["Tarix", "Maddə", "Məbləğ", "Qeyd"], example: ["", "Nəqliyyat", 30, ""] },
     { key: "borclar", sheetName: "Borclar", headers: ["Tarix", "Ad", "Məbləğ", "İstiqamət", "Qeyd"], example: ["", "Nümunə Ad", 100, "Verdim", ""] },
@@ -495,7 +508,7 @@
   }
 
   const MASTER_HEADER_MAPS = {
-    alislar: { tarix: "date", vaxt: "time", kim: "who", kq: "kg", kg: "kg", nov: "type", tip: "type", mebleg: "sum", sum: "sum", qeyd: "note" },
+    alislar: { tarix: "date", vaxt: "time", kim: "who", kq: "kg", kg: "kg", nov: "type", tip: "type", mebleg: "sum", sum: "sum", "kassadan odenilen": "paidNow", qeyd: "note" },
     satislar: { tarix: "date", vaxt: "time", kim: "who", kq: "kg", kg: "kg", nov: "type", tip: "type", mebleg: "sum", sum: "sum", qeyd: "note" },
     xercler: { tarix: "date", madde: "category", mebleg: "sum", sum: "sum", qeyd: "note" },
     borclar: { tarix: "date", ad: "person", mebleg: "sum", sum: "sum", istiqamet: "direction", qeyd: "note" },
@@ -515,8 +528,13 @@
       let type = String(get("type") || "").trim();
       if (!type) type = "Digər";
       const who = String(get("who") || "").trim() || "Müştəri";
+      const paidNowRaw = get("paidNow");
       const base = { date: parseDateCell(dateRaw, todayISO()), time: parseTimeCell(idx.time !== undefined ? row[idx.time] : null), kg, type, sum, note: String(get("note") || "").trim() };
-      return key === "alislar" ? { ...base, supplier: who, price: Number((sum / kg).toFixed(2)) } : { ...base, buyer: who };
+      if (key === "alislar") {
+        const paidNow = paidNowRaw !== "" && paidNowRaw !== undefined && paidNowRaw !== null ? Number(paidNowRaw) : sum;
+        return { ...base, supplier: who, price: Number((sum / kg).toFixed(2)), paidNow };
+      }
+      return { ...base, buyer: who };
     }
     if (key === "xercler") {
       const category = String(get("category") || "").trim();
@@ -769,6 +787,13 @@
       cashRef = await logCash(date, "in", d.sum, "Borc alındı: " + d.person, { source: "debt_took" });
     }
     const entry = { paid: false, ...d, date, cashLogId: cashRef ? cashRef.id : null, ts: Date.now() };
+    await addDoc("debts", entry);
+  }
+  // Records a debt without any cash movement — used when the "debt" represents unpaid
+  // goods (e.g. a purchase not fully paid for) rather than actual cash changing hands.
+  async function addDebtNoCash(d) {
+    const date = d.date || todayISO();
+    const entry = { paid: false, ...d, date, cashLogId: null, ts: Date.now() };
     await addDoc("debts", entry);
   }
   async function toggleDebtPaid(id) {
@@ -1073,10 +1098,11 @@
 
   // ---------- Kassa ----------
   function renderKassaTab() {
-    const totalIn = state.cashLog.filter((c) => c.type === "in").reduce((s, c) => s + c.sum, 0);
-    const totalOut = state.cashLog.filter((c) => c.type === "out").reduce((s, c) => s + c.sum, 0);
+    const reportableCashLog = reportableCash(state.cashLog);
+    const totalIn = reportableCashLog.filter((c) => c.type === "in").reduce((s, c) => s + c.sum, 0);
+    const totalOut = reportableCashLog.filter((c) => c.type === "out").reduce((s, c) => s + c.sum, 0);
     const balance = cashBalance();
-    const breakdown = buildCashBreakdown(state.cashLog);
+    const breakdown = buildCashBreakdown(reportableCashLog);
     return `
       <div class="stat-row"><div class="stat-card"><div class="stat-label">${ICONS.wallet}Kassada qalıq</div><div class="stat-value">${fmt(balance)}</div></div></div>
       <div class="stat-row">
@@ -1149,9 +1175,11 @@
         </div>
         <div class="field-row">
           <div class="field"><label>Kq</label><input id="pKg" type="number" inputmode="decimal" placeholder="0" /></div>
-          <div class="field"><label>Ödənilən məbləğ</label><input id="pSum" type="number" inputmode="decimal" placeholder="0" /></div>
+          <div class="field"><label>Ümumi məbləğ</label><input id="pSum" type="number" inputmode="decimal" placeholder="0" /></div>
         </div>
         <div id="pAvgDisplay" style="text-align:center;font-size:12.5px;color:var(--muted);margin-bottom:10px;"></div>
+        <div class="field-row"><div class="field"><label>Kassadan indi ödənilən (boş — tam ödənilib)</label><input id="pPaidNow" type="number" inputmode="decimal" placeholder="Ümumi məbləğ ilə eyni" /></div></div>
+        <div class="time-note">Boş buraxsan tam məbləğ kassadan ödənilmiş sayılır. Az yazsan, qalıq həmin şəxsə borc kimi qeyd olunur (kassaya təsir etmədən).</div>
         <div class="field-row"><div class="field"><label>Qeyd</label><input id="pNote" placeholder="əlavə qeyd" /></div></div>
         <div class="time-note">Vaxt avtomatik qeyd olunacaq: ${nowTime()}</div>
         <button class="btn" id="pSubmit">${ICONS.plus} Alışı qeyd et</button>
@@ -1165,7 +1193,7 @@
               <div class="list-row">
                 <div>
                   <div class="title">${esc(p.supplier)} — ${fmt(p.kg)} kq · ${esc(p.type || "")}</div>
-                  <div class="meta">${esc(p.date)}${p.time ? " · " + esc(p.time) : ""}${p.note ? " · " + esc(p.note) : ""}</div>
+                  <div class="meta">${esc(p.date)}${p.time ? " · " + esc(p.time) : ""}${p.note ? " · " + esc(p.note) : ""}${p.paidNow !== undefined && p.paidNow < p.sum ? ` · ${fmt(p.paidNow)}/${fmt(p.sum)} ödənilib, qalıq borcdur` : ""}</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px;">
                   <div class="right">${fmt(p.sum)}</div>
@@ -1732,8 +1760,9 @@
     const totalSalesKg = sales.reduce((s, x) => s + x.kg, 0);
     const totalSalesSum = sales.reduce((s, x) => s + x.sum, 0);
     const totalExpenses = expenses.reduce((s, e) => s + e.sum, 0);
-    const cashIn = cashLog.filter((c) => c.type === "in").reduce((s, c) => s + c.sum, 0);
-    const cashOut = cashLog.filter((c) => c.type === "out").reduce((s, c) => s + c.sum, 0);
+    const reportableCashLog = reportableCash(cashLog);
+    const cashIn = reportableCashLog.filter((c) => c.type === "in").reduce((s, c) => s + c.sum, 0);
+    const cashOut = reportableCashLog.filter((c) => c.type === "out").reduce((s, c) => s + c.sum, 0);
     const truckTotalKg = truckDay.reduce((s, t) => s + t.entries.reduce((s2, e) => s2 + e.kg, 0), 0);
     const truckTotalBags = truckDay.reduce((s, t) => s + t.entries.reduce((s2, e) => s2 + e.bags, 0), 0);
     const driverAdvancesDay = state.driverAdvances.filter((a) => a.date === reportDate);
@@ -1743,7 +1772,7 @@
     const fuelByTractorist = {};
     fuelDay.forEach((f) => { fuelByTractorist[f.tractorist] = (fuelByTractorist[f.tractorist] || 0) + f.liters; });
     const fuelTotalLiters = fuelDay.reduce((s, f) => s + f.liters, 0);
-    const cashBreakdown = buildCashBreakdown(cashLog);
+    const cashBreakdown = buildCashBreakdown(reportableCashLog);
 
     return { purchases, sales, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalPurchaseSum, totalSalesKg, totalSalesSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags, driverAdvancesDay, driverPurchasesDay, driverSummaries, fuelDay, fuelByTractorist, fuelTotalLiters, cashBreakdown };
   }
@@ -1907,8 +1936,8 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     const r = buildReportData(reportDate);
     const wb = XLSX.utils.book_new();
 
-    const purchaseRows = r.purchases.map((p) => ({ Tarix: p.date, Vaxt: p.time || "", "Kim təhvil verdi": p.supplier, Kq: p.kg, Növ: p.type || "", "Orta qiymət (kq)": p.price || "", Məbləğ: p.sum, Qeyd: p.note || "" }));
-    if (purchaseRows.length) purchaseRows.push({ Tarix: "", Vaxt: "", "Kim təhvil verdi": "CƏMİ", Kq: r.totalKg, Növ: "", "Orta qiymət (kq)": "", Məbləğ: r.totalPurchaseSum, Qeyd: "" });
+    const purchaseRows = r.purchases.map((p) => ({ Tarix: p.date, Vaxt: p.time || "", "Kim təhvil verdi": p.supplier, Kq: p.kg, Növ: p.type || "", "Orta qiymət (kq)": p.price || "", Məbləğ: p.sum, "Kassadan ödənilən": p.paidNow !== undefined ? p.paidNow : p.sum, Qeyd: p.note || "" }));
+    if (purchaseRows.length) purchaseRows.push({ Tarix: "", Vaxt: "", "Kim təhvil verdi": "CƏMİ", Kq: r.totalKg, Növ: "", "Orta qiymət (kq)": "", Məbləğ: r.totalPurchaseSum, "Kassadan ödənilən": "", Qeyd: "" });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(purchaseRows.length ? purchaseRows : [{ Tarix: reportDate, Qeyd: "qeyd yoxdur" }]), "Alışlar");
 
     const saleRows = r.sales.map((s) => ({ Tarix: s.date, Vaxt: s.time || "", "Kim aldı": s.buyer, Kq: s.kg, Növ: s.type || "", Məbləğ: s.sum, Qeyd: s.note || "" }));
@@ -1971,7 +2000,7 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
 
   function downloadAllExcel() {
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.purchases.map((p) => ({ Tarix: p.date, Vaxt: p.time || "", "Kim təhvil verdi": p.supplier, Kq: p.kg, Növ: p.type || "", "Orta qiymət (kq)": p.price || "", Məbləğ: p.sum, Qeyd: p.note || "" }))), "Alışlar");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.purchases.map((p) => ({ Tarix: p.date, Vaxt: p.time || "", "Kim təhvil verdi": p.supplier, Kq: p.kg, Növ: p.type || "", "Orta qiymət (kq)": p.price || "", Məbləğ: p.sum, "Kassadan ödənilən": p.paidNow !== undefined ? p.paidNow : p.sum, Qeyd: p.note || "" }))), "Alışlar");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.sales.map((s) => ({ Tarix: s.date, Vaxt: s.time || "", "Kim aldı": s.buyer, Kq: s.kg, Növ: s.type || "", Məbləğ: s.sum, Qeyd: s.note || "" }))), "Satışlar");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.expenses.map((e) => ({ Tarix: e.date, Maddə: e.category, Məbləğ: e.sum, Qeyd: e.note || "" }))), "Xərclər");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.cashLog.map((c) => ({ Tarix: c.date, Növ: c.type === "in" ? "Mədaxil" : "Çıxarış", Məbləğ: c.sum, Qeyd: c.note || "" }))), "Kassa");
@@ -2044,7 +2073,9 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
       const supplier = document.getElementById("pSupplier").value.trim() || "Müştəri";
       const note = document.getElementById("pNote").value;
       const price = Number((sum / kg).toFixed(2));
-      await addPurchase({ supplier, kg, type: purchaseType, price, sum, note });
+      const paidNowRaw = document.getElementById("pPaidNow").value;
+      const paidNow = paidNowRaw !== "" ? Number(paidNowRaw) : sum;
+      await addPurchase({ supplier, kg, type: purchaseType, price, sum, note, paidNow });
     };
     document.querySelectorAll("[data-del-purchase]").forEach((btn) => {
       btn.onclick = () => deletePurchase(btn.dataset.delPurchase);
