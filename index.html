@@ -302,9 +302,10 @@
   // ---------- Write helpers ----------
   async function addDoc(col, data) {
     try {
-      await db.collection(col).add(data);
+      return await db.collection(col).add(data);
     } catch (e) {
       alert("Xəta: " + e.message);
+      return null;
     }
   }
   async function updateDoc(col, id, data) {
@@ -322,47 +323,58 @@
     }
   }
 
+  // Deletes the exact cashLog entry that was created together with a record (clean history).
+  // Falls back to a compensating entry only for old records saved before this linking existed.
+  async function removeLinkedCash(record, fallbackType, fallbackNote) {
+    if (record && record.cashLogId) {
+      await deleteDoc("cashLog", record.cashLogId);
+    } else if (record) {
+      await addDoc("cashLog", { date: todayISO(), type: fallbackType, sum: record.sum, note: fallbackNote });
+    }
+  }
+
   async function addPurchase(p) {
-    const entry = { date: todayISO(), time: nowTime(), ...p };
+    const cashRef = await addDoc("cashLog", { date: todayISO(), type: "out", sum: p.sum, note: "Alış: " + p.supplier });
+    const entry = { date: todayISO(), time: nowTime(), ...p, cashLogId: cashRef ? cashRef.id : null };
     await addDoc("purchases", entry);
-    await addDoc("cashLog", { date: todayISO(), type: "out", sum: entry.sum, note: "Alış: " + entry.supplier });
   }
   async function deletePurchase(id) {
     const p = state.purchases.find((x) => x.id === id);
     await deleteDoc("purchases", id);
-    if (p) await addDoc("cashLog", { date: todayISO(), type: "in", sum: p.sum, note: "Ləğv edildi: " + p.supplier });
+    await removeLinkedCash(p, "in", "Ləğv edildi: " + (p ? p.supplier : ""));
   }
 
   async function addSale(s) {
-    const entry = { date: todayISO(), time: nowTime(), ...s };
+    const cashRef = await addDoc("cashLog", { date: todayISO(), type: "in", sum: s.sum, note: "Satış: " + s.buyer });
+    const entry = { date: todayISO(), time: nowTime(), ...s, cashLogId: cashRef ? cashRef.id : null };
     await addDoc("sales", entry);
-    await addDoc("cashLog", { date: todayISO(), type: "in", sum: entry.sum, note: "Satış: " + entry.buyer });
   }
   async function deleteSale(id) {
     const s = state.sales.find((x) => x.id === id);
     await deleteDoc("sales", id);
-    if (s) await addDoc("cashLog", { date: todayISO(), type: "out", sum: s.sum, note: "Satış ləğv edildi: " + s.buyer });
+    await removeLinkedCash(s, "out", "Satış ləğv edildi: " + (s ? s.buyer : ""));
   }
 
   async function addExpense(e) {
-    const entry = { date: todayISO(), ...e };
+    const cashRef = await addDoc("cashLog", { date: todayISO(), type: "out", sum: e.sum, note: e.category });
+    const entry = { date: todayISO(), ...e, cashLogId: cashRef ? cashRef.id : null };
     await addDoc("expenses", entry);
-    await addDoc("cashLog", { date: todayISO(), type: "out", sum: entry.sum, note: entry.category });
   }
   async function deleteExpense(id) {
     const e = state.expenses.find((x) => x.id === id);
     await deleteDoc("expenses", id);
-    if (e) await addDoc("cashLog", { date: todayISO(), type: "in", sum: e.sum, note: "Ləğv edildi: " + e.category });
+    await removeLinkedCash(e, "in", "Ləğv edildi: " + (e ? e.category : ""));
   }
 
   async function addDebt(d) {
-    const entry = { date: todayISO(), paid: false, ...d };
-    await addDoc("debts", entry);
+    let cashRef;
     if (d.direction === "gave") {
-      await addDoc("cashLog", { date: todayISO(), type: "out", sum: d.sum, note: "Borc: " + d.person });
+      cashRef = await addDoc("cashLog", { date: todayISO(), type: "out", sum: d.sum, note: "Borc: " + d.person });
     } else {
-      await addDoc("cashLog", { date: todayISO(), type: "in", sum: d.sum, note: "Borc alındı: " + d.person });
+      cashRef = await addDoc("cashLog", { date: todayISO(), type: "in", sum: d.sum, note: "Borc alındı: " + d.person });
     }
+    const entry = { date: todayISO(), paid: false, ...d, cashLogId: cashRef ? cashRef.id : null };
+    await addDoc("debts", entry);
   }
   async function toggleDebtPaid(id) {
     const d = state.debts.find((x) => x.id === id);
@@ -370,11 +382,16 @@
     await updateDoc("debts", id, { paid: !d.paid });
   }
   async function deleteDebtFn(id) {
+    const d = state.debts.find((x) => x.id === id);
     await deleteDoc("debts", id);
+    if (d) await removeLinkedCash(d, d.direction === "gave" ? "in" : "out", "Borc ləğv edildi: " + d.person);
   }
 
   async function addCashLog(c) {
-    await addDoc("cashLog", { date: todayISO(), ...c });
+    await addDoc("cashLog", { date: todayISO(), manual: true, ...c });
+  }
+  async function deleteCashLog(id) {
+    await deleteDoc("cashLog", id);
   }
 
   async function addAttendance(a) {
@@ -544,7 +561,10 @@
             : [...state.cashLog].reverse().map((c) => `
               <div class="list-row">
                 <div><div class="title">${esc(c.note || (c.type === "in" ? "Mədaxil" : "Çıxarış"))}</div><div class="meta">${esc(c.date)}</div></div>
-                <div class="right ${c.type === "in" ? "green" : "red"}">${c.type === "in" ? "+" : "−"}${fmt(c.sum)}</div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <div class="right ${c.type === "in" ? "green" : "red"}">${c.type === "in" ? "+" : "−"}${fmt(c.sum)}</div>
+                  ${c.manual ? `<button class="del-btn" data-del-cash="${c.id}">${ICONS.trash}</button>` : ""}
+                </div>
               </div>`).join("")
         }
       </div>
@@ -1045,6 +1065,9 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
       if (!amount) return;
       await addCashLog({ type: kassaType, sum: amount, note });
     };
+    document.querySelectorAll("[data-del-cash]").forEach((btn) => {
+      btn.onclick = () => deleteCashLog(btn.dataset.delCash);
+    });
   }
 
   function wirePurchases() {
