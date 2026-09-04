@@ -1486,17 +1486,19 @@
     const tractoristOptions = state.tractorists.map((t) => `<option value="${esc(t.name)}"></option>`).join("");
 
     return `
-      <div class="section"><div class="section-title">Tarix</div>
+      <div class="section"><div class="section-title">Tarix (siyahı üçün)</div>
         <div class="field-row"><div class="field"><input id="truckDate" type="date" value="${esc(state.truckDate)}" /></div></div>
       </div>
       <div class="section">
-        <div class="section-title">Yeni maşın yükü</div>
+        <div class="section-title">Göndərilən maşın və yükü</div>
         <div class="field-row"><div class="field"><label>Sürücü</label><input id="truckDriver" placeholder="Sürücünün adı" /></div></div>
+        <div class="field-row"><div class="field"><label>Göndərilmə tarixi</label><input id="truckLoadDate" type="date" value="${esc(state.truckDate)}" /></div></div>
         ${entriesHtml}
         <div style="margin-bottom:10px;"><button class="btn-outline" id="truckAddRow" style="border-style:dashed;">+ Sətir əlavə et</button></div>
         <div class="field-row"><div class="field"><label>Qeyd</label><input id="truckNote" placeholder="məcburi deyil" /></div></div>
         ${validEntries.length ? `<div style="text-align:center;font-size:14px;color:var(--ink);margin-bottom:10px;">Cəmi: <b>${fmt(totalKg)} kq</b> · <b>${fmt(totalBags)} kisə</b></div>` : ""}
         <button class="btn" id="truckSubmit">${ICONS.plus} Maşını qeyd et</button>
+        <div class="time-note">Əvvəlki günlərdə göndərilmiş maşını əlavə etmək üçün "Göndərilmə tarixi"ni dəyişin.</div>
       </div>
       <div class="section">
         <div class="section-title">${esc(state.truckDate)} tarixində göndərilən maşınlar</div>
@@ -1522,14 +1524,16 @@
       <datalist id="tractoristNamesList">${tractoristOptions}</datalist>
 
       <div class="section">
-        <div class="section-title">Yanacaq qeydi (${esc(state.truckDate)})</div>
+        <div class="section-title">Yanacaq qeydi</div>
         <div class="field-row"><div class="field"><label>Traktorist</label><input id="fuelTractorist" list="tractoristNamesList" placeholder="Ad" /></div></div>
+        <div class="field-row"><div class="field"><label>Tarix</label><input id="fuelDate" type="date" value="${esc(state.truckDate)}" /></div></div>
         <div class="toggle-row">
           ${FUEL_TYPES.map((t) => `<button class="toggle-btn ${fuelType === t ? "active-ink" : ""}" data-fuel-type="${esc(t)}">${esc(t)}</button>`).join("")}
         </div>
         <div class="field-row"><div class="field"><label>Litr</label><input id="fuelLiters" type="number" inputmode="decimal" placeholder="0" /></div></div>
         <div class="field-row"><div class="field"><label>Qeyd</label><input id="fuelNote" placeholder="məcburi deyil" /></div></div>
         <button class="btn red" id="fuelSubmit">${ICONS.plus} Yanacağı qeyd et</button>
+        <div class="time-note">Ayın başqa günü üçün dizel əlavə etmək istəsən, yuxarıdakı "Tarix"i dəyişib yaz.</div>
       </div>
 
       <div class="section">
@@ -2159,10 +2163,11 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     document.getElementById("truckSubmit").onclick = async () => {
       const driver = document.getElementById("truckDriver").value.trim();
       const note = document.getElementById("truckNote").value;
+      const loadDate = document.getElementById("truckLoadDate").value || state.truckDate;
       const validEntries = state.truckEntries.filter((e) => e.supplier.trim() && e.kg);
       if (!driver || validEntries.length === 0) return;
       await addTruckLoad({
-        date: state.truckDate,
+        date: loadDate,
         driver,
         note,
         entries: validEntries.map((e) => ({ supplier: e.supplier.trim(), kg: Number(e.kg), bags: Number(e.bags) || 0 })),
@@ -2191,7 +2196,8 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
       const liters = Number(document.getElementById("fuelLiters").value);
       if (!tractorist || !liters) return;
       const note = document.getElementById("fuelNote").value;
-      await addFuelLog({ date: state.truckDate, tractorist, liters, type: fuelType, note });
+      const fuelDate = document.getElementById("fuelDate").value || state.truckDate;
+      await addFuelLog({ date: fuelDate, tractorist, liters, type: fuelType, note });
       document.getElementById("fuelTractorist").value = "";
       document.getElementById("fuelLiters").value = "";
       document.getElementById("fuelNote").value = "";
