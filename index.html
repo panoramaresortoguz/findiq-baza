@@ -202,6 +202,19 @@
   const NUT_TYPES = ["Pasos", "Əl fındığı", "Digər"];
   const QUICK_EXPENSE_CATS = ["Kirayə", "Nəqliyyat", "Sənəd/pasport", "Təmizlik", "İnventar", "Əmək haqqı"];
 
+  function normalizeHeader(h) {
+    return String(h || "").trim().toLowerCase()
+      .replace(/ə/g, "e").replace(/ı/g, "i").replace(/ö/g, "o").replace(/ü/g, "u").replace(/ç/g, "c").replace(/ş/g, "s").replace(/ğ/g, "g");
+  }
+  const SALES_HEADER_MAP = {
+    tarix: "date", vaxt: "time",
+    "kim aldi": "buyer", ad: "buyer", "musteri": "buyer",
+    kq: "kg", kg: "kg",
+    nov: "type", tip: "type",
+    "mebleg": "sum", sum: "sum", "alinan mebleg": "sum",
+    qeyd: "note", note: "note",
+  };
+
   // ---------- State ----------
   const state = {
     tab: "report",
@@ -216,13 +229,21 @@
     cashLog: [],
     attendance: [],
     truckLoads: [],
-    dataLoaded: { purchases: false, sales: false, expenses: false, debts: false, cashLog: false, attendance: false, truckLoads: false },
+    drivers: [],
+    driverAdvances: [],
+    driverPurchases: [],
+    driverSettlements: [],
+    dataLoaded: { purchases: false, sales: false, expenses: false, debts: false, cashLog: false, attendance: false, truckLoads: false, drivers: false, driverAdvances: false, driverPurchases: false, driverSettlements: false },
     // ephemeral form state per tab (kept simple, re-read from DOM on submit)
     reportDate: todayISO(),
     debtSearch: "",
     truckDate: todayISO(),
     truckEntries: [{ id: uid(), supplier: "", kg: "", bags: "" }],
     attendanceDate: todayISO(),
+    salesImportPending: [],
+    salesImportSkipped: 0,
+    salesImportFileName: "",
+    driversDate: todayISO(),
   };
 
   function todayISO() {
@@ -255,6 +276,7 @@
     trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>',
     download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg>',
     sell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 7 13.5 15.5 8.5 10.5 2 17"/><path d="M16 7h6v6"/></svg>',
+    driver: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>',
   };
 
   const TABS = [
@@ -266,6 +288,7 @@
     { id: "debts", label: "Borclar", icon: "hand", ownerOnly: true },
     { id: "attendance", label: "Davamiyyət", icon: "calendar", ownerOnly: true },
     { id: "truck", label: "Maşın", icon: "truck", ownerOnly: true },
+    { id: "drivers", label: "Sürücülər", icon: "driver", ownerOnly: true },
   ];
 
   // ---------- Firestore live sync ----------
@@ -293,6 +316,10 @@
     attachListener("cashLog", "cashLog");
     attachListener("attendance", "attendance");
     attachListener("truckLoads", "truckLoads");
+    attachListener("drivers", "drivers");
+    attachListener("driverAdvances", "driverAdvances");
+    attachListener("driverPurchases", "driverPurchases");
+    attachListener("driverSettlements", "driverSettlements");
   }
 
   function cashBalance() {
@@ -353,6 +380,88 @@
     const s = state.sales.find((x) => x.id === id);
     await deleteDoc("sales", id);
     await removeLinkedCash(s, "out", "Satış ləğv edildi: " + (s ? s.buyer : ""));
+  }
+
+  function downloadSalesTemplate() {
+    const wb = XLSX.utils.book_new();
+    const data = [
+      { Tarix: todayISO(), Vaxt: "10:00", "Kim aldı": "Nümunə Ad", Kq: 50, Növ: "Pasos", Məbləğ: 500, Qeyd: "" },
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), "Satışlar");
+    XLSX.writeFile(wb, "satislar_shablon.xlsx");
+  }
+
+  async function handleSalesFile(file) {
+    try {
+      const data = await file.arrayBuffer();
+      const wb = XLSX.read(data, { type: "array", cellDates: true });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
+      if (!rows.length) { alert("Fayl boşdur"); return; }
+      const headers = rows[0].map(normalizeHeader);
+      const idx = {};
+      headers.forEach((h, i) => { const key = SALES_HEADER_MAP[h]; if (key && !(key in idx)) idx[key] = i; });
+      if (idx.kg === undefined || idx.sum === undefined) {
+        alert("Faylda 'Kq' və 'Məbləğ' sütunları tapılmadı. Şablonu yoxlayın.");
+        return;
+      }
+      const parsed = [];
+      let skipped = 0;
+      for (let r = 1; r < rows.length; r++) {
+        const row = rows[r];
+        if (!row || row.every((c) => c === "" || c == null)) continue;
+        const kg = Number(row[idx.kg]);
+        const sum = Number(row[idx.sum]);
+        if (!kg || !sum) { skipped++; continue; }
+        let date = todayISO();
+        if (idx.date !== undefined && row[idx.date]) {
+          const raw = row[idx.date];
+          if (raw instanceof Date) date = raw.toISOString().slice(0, 10);
+          else {
+            const s = String(raw).trim();
+            if (/^\d{4}-\d{2}-\d{2}$/.test(s)) date = s;
+            else {
+              const m = s.match(/^(\d{1,2})[.\/](\d{1,2})[.\/](\d{4})$/);
+              if (m) date = `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+            }
+          }
+        }
+        let time = "";
+        if (idx.time !== undefined && row[idx.time]) {
+          const raw = row[idx.time];
+          if (raw instanceof Date) time = String(raw.getHours()).padStart(2, "0") + ":" + String(raw.getMinutes()).padStart(2, "0");
+          else time = String(raw).trim();
+        }
+        const buyer = idx.buyer !== undefined ? String(row[idx.buyer] || "").trim() : "";
+        let type = idx.type !== undefined ? String(row[idx.type] || "").trim() : "";
+        if (!NUT_TYPES.includes(type)) type = NUT_TYPES[0];
+        const note = idx.note !== undefined ? String(row[idx.note] || "").trim() : "";
+        parsed.push({ date, time, buyer: buyer || "Adsız", kg, type, sum, note });
+      }
+      state.salesImportPending = parsed;
+      state.salesImportSkipped = skipped;
+      state.salesImportFileName = file.name;
+      renderTabContent();
+    } catch (e) {
+      alert("Fayl oxuna bilmədi: " + e.message);
+    }
+  }
+
+  async function commitSalesImport() {
+    const rows = state.salesImportPending || [];
+    if (!rows.length) return;
+    const btn = document.getElementById("salesImportConfirm");
+    for (let i = 0; i < rows.length; i++) {
+      if (btn) btn.textContent = `Yüklənir… (${i + 1}/${rows.length})`;
+      const r = rows[i];
+      const cashRef = await addDoc("cashLog", { date: r.date, type: "in", sum: r.sum, note: "Satış: " + r.buyer });
+      await addDoc("sales", { date: r.date, time: r.time, buyer: r.buyer, kg: r.kg, type: r.type, sum: r.sum, note: r.note, cashLogId: cashRef ? cashRef.id : null });
+    }
+    state.salesImportPending = [];
+    state.salesImportSkipped = 0;
+    state.salesImportFileName = "";
+    alert(`İdxal tamamlandı: ${rows.length} qeyd əlavə olundu`);
+    renderTabContent();
   }
 
   async function addExpense(e) {
@@ -419,6 +528,70 @@
   }
   async function deleteTruckLoad(id) {
     await deleteDoc("truckLoads", id);
+  }
+
+  // ---------- Drivers (Sürücülər) ----------
+  async function addDriver(name) {
+    if (state.drivers.some((d) => d.name.toLowerCase() === name.toLowerCase())) return;
+    await addDoc("drivers", { name });
+  }
+  async function removeDriver(id) {
+    await deleteDoc("drivers", id);
+  }
+
+  async function addDriverAdvance(a) {
+    const cashRef = await addDoc("cashLog", { date: todayISO(), type: "out", sum: a.sum, note: "Sürücüyə avans: " + a.driver });
+    await addDoc("driverAdvances", { date: todayISO(), driver: a.driver, sum: a.sum, note: a.note || "", cashLogId: cashRef ? cashRef.id : null });
+  }
+  async function deleteDriverAdvance(id) {
+    const a = state.driverAdvances.find((x) => x.id === id);
+    await deleteDoc("driverAdvances", id);
+    await removeLinkedCash(a, "in", "Sürücü avansı ləğv edildi: " + (a ? a.driver : ""));
+  }
+
+  async function addDriverPurchase(p) {
+    await addDoc("driverPurchases", { date: todayISO(), time: nowTime(), paid: false, ...p });
+  }
+  async function toggleDriverPurchasePaid(id) {
+    const p = state.driverPurchases.find((x) => x.id === id);
+    if (!p) return;
+    await updateDoc("driverPurchases", id, { paid: !p.paid });
+  }
+  async function deleteDriverPurchase(id) {
+    await deleteDoc("driverPurchases", id);
+  }
+
+  function buildDriverSummaries(date) {
+    const advances = state.driverAdvances.filter((a) => a.date === date);
+    const purchases = state.driverPurchases.filter((p) => p.date === date);
+    const settlements = state.driverSettlements.filter((s) => s.date === date);
+    const names = Array.from(new Set([...advances.map((a) => a.driver), ...purchases.map((p) => p.driver)]));
+    return names.map((driver) => {
+      const advance = advances.filter((a) => a.driver === driver).reduce((s, a) => s + a.sum, 0);
+      const dp = purchases.filter((p) => p.driver === driver);
+      const kg = dp.reduce((s, p) => s + p.kg, 0);
+      const bags = dp.reduce((s, p) => s + (p.bags || 0), 0);
+      const spent = dp.reduce((s, p) => s + p.sum, 0);
+      const remaining = Number((advance - spent).toFixed(2));
+      const settlement = settlements.find((s) => s.driver === driver);
+      return { driver, advance, kg, bags, spent, remaining, settled: !!settlement, settlementId: settlement ? settlement.id : null };
+    });
+  }
+
+  async function settleDriver(driver, date, remaining) {
+    let cashRef = null;
+    if (remaining > 0) {
+      cashRef = await addDoc("cashLog", { date: todayISO(), type: "in", sum: remaining, note: "Sürücü qaytardı: " + driver });
+    } else if (remaining < 0) {
+      cashRef = await addDoc("cashLog", { date: todayISO(), type: "out", sum: Math.abs(remaining), note: "Sürücüyə ödənildi: " + driver });
+    }
+    await addDoc("driverSettlements", { date, driver, sum: Math.abs(remaining), direction: remaining >= 0 ? "return" : "reimburse", cashLogId: cashRef ? cashRef.id : null });
+  }
+  async function undoSettleDriver(id) {
+    const s = state.driverSettlements.find((x) => x.id === id);
+    if (!s) return;
+    await deleteDoc("driverSettlements", id);
+    if (s.cashLogId) await deleteDoc("cashLog", s.cashLogId);
   }
 
   // ---------- Auth ----------
@@ -539,6 +712,7 @@
     else if (state.tab === "debts" && isOwner()) el.innerHTML = renderDebtsTab();
     else if (state.tab === "attendance" && isOwner()) el.innerHTML = renderAttendanceTab();
     else if (state.tab === "truck" && isOwner()) el.innerHTML = renderTruckTab();
+    else if (state.tab === "drivers" && isOwner()) el.innerHTML = renderDriversTab();
     else el.innerHTML = renderReportTab();
     attachTabEvents();
   }
@@ -593,13 +767,11 @@
     const todays = state.purchases.filter((p) => p.date === today);
     const todayKg = todays.reduce((s, p) => s + p.kg, 0);
     const todaySum = todays.reduce((s, p) => s + p.sum, 0);
-    const todayBags = todays.reduce((s, p) => s + (p.bags || 0), 0);
     return `
       <div class="stat-row">
         <div class="stat-card"><div class="stat-label">${ICONS.package}Bu gün alınıb</div><div class="stat-value">${fmt(todayKg)} kg</div></div>
         <div class="stat-card green"><div class="stat-label">${ICONS.wallet}Bugünün alış məbləği</div><div class="stat-value">${fmt(todaySum)}</div></div>
       </div>
-      <div class="stat-row"><div class="stat-card"><div class="stat-label">Bu gün kisə sayı</div><div class="stat-value">${fmt(todayBags)}</div></div></div>
       <div class="section">
         <div class="section-title">Yeni alış</div>
         <div class="field-row"><div class="field"><label>Kim təhvil verdi (məcburi deyil)</label><input id="pSupplier" placeholder="Ad" /></div></div>
@@ -608,9 +780,8 @@
         </div>
         <div class="field-row">
           <div class="field"><label>Kq</label><input id="pKg" type="number" inputmode="decimal" placeholder="0" /></div>
-          <div class="field"><label>Kisə sayı</label><input id="pBags" type="number" inputmode="decimal" placeholder="0" /></div>
+          <div class="field"><label>Ödənilən məbləğ</label><input id="pSum" type="number" inputmode="decimal" placeholder="0" /></div>
         </div>
-        <div class="field-row"><div class="field"><label>Ödənilən məbləğ</label><input id="pSum" type="number" inputmode="decimal" placeholder="0" /></div></div>
         <div id="pAvgDisplay" style="text-align:center;font-size:12.5px;color:var(--muted);margin-bottom:10px;"></div>
         <div class="field-row"><div class="field"><label>Qeyd</label><input id="pNote" placeholder="əlavə qeyd" /></div></div>
         <div class="time-note">Vaxt avtomatik qeyd olunacaq: ${nowTime()}</div>
@@ -624,7 +795,7 @@
             : [...state.purchases].reverse().map((p) => `
               <div class="list-row">
                 <div>
-                  <div class="title">${esc(p.supplier)} — ${fmt(p.kg)} kq${p.bags ? " (" + p.bags + " kisə)" : ""} · ${esc(p.type || "")}</div>
+                  <div class="title">${esc(p.supplier)} — ${fmt(p.kg)} kq · ${esc(p.type || "")}</div>
                   <div class="meta">${esc(p.date)}${p.time ? " · " + esc(p.time) : ""}${p.note ? " · " + esc(p.note) : ""}</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px;">
@@ -657,12 +828,26 @@
         </div>
         <div class="field-row">
           <div class="field"><label>Kq</label><input id="sKg" type="number" inputmode="decimal" placeholder="0" /></div>
-          <div class="field"><label>Kisə sayı</label><input id="sBags" type="number" inputmode="decimal" placeholder="0" /></div>
+          <div class="field"><label>Alınan məbləğ</label><input id="sSum" type="number" inputmode="decimal" placeholder="0" /></div>
         </div>
-        <div class="field-row"><div class="field"><label>Alınan məbləğ</label><input id="sSum" type="number" inputmode="decimal" placeholder="0" /></div></div>
         <div class="field-row"><div class="field"><label>Qeyd</label><input id="sNote" placeholder="əlavə qeyd" /></div></div>
         <div class="time-note">Vaxt avtomatik qeyd olunacaq: ${nowTime()}</div>
         <button class="btn green" id="sSubmit">${ICONS.plus} Satışı qeyd et</button>
+      </div>
+      <div class="section">
+        <div class="section-title">Excel-dən idxal et</div>
+        <div style="margin-bottom:10px;"><button class="btn-outline" id="salesTemplateBtn">${ICONS.download} Şablon yüklə</button></div>
+        <div class="field-row"><div class="field"><label>Excel faylı seç (.xlsx)</label><input id="salesImportFile" type="file" accept=".xlsx,.xls" /></div></div>
+        ${
+          state.salesImportPending.length
+            ? `<div style="font-size:13px;color:var(--ink);margin-bottom:8px;">
+                ${esc(state.salesImportFileName)}: <b>${state.salesImportPending.length}</b> qeyd tapıldı
+                ${state.salesImportSkipped ? `, ${state.salesImportSkipped} sətir buraxıldı (Kq/Məbləğ boş)` : ""}
+                · cəmi ${fmt(state.salesImportPending.reduce((s, r) => s + r.kg, 0))} kq, ${fmt(state.salesImportPending.reduce((s, r) => s + r.sum, 0))} məbləğ
+              </div>
+              <button class="btn green" id="salesImportConfirm">${ICONS.plus} Təsdiqlə və yüklə (${state.salesImportPending.length})</button>`
+            : ""
+        }
       </div>
       <div class="section">
         <div class="section-title">Qeydlər (${state.sales.length})</div>
@@ -672,7 +857,7 @@
             : [...state.sales].reverse().map((s) => `
               <div class="list-row">
                 <div>
-                  <div class="title">${esc(s.buyer)} — ${fmt(s.kg)} kq${s.bags ? " (" + s.bags + " kisə)" : ""} · ${esc(s.type || "")}</div>
+                  <div class="title">${esc(s.buyer)} — ${fmt(s.kg)} kq · ${esc(s.type || "")}</div>
                   <div class="meta">${esc(s.date)}${s.time ? " · " + esc(s.time) : ""}${s.note ? " · " + esc(s.note) : ""}</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px;">
@@ -901,6 +1086,134 @@
     `;
   }
 
+  // ---------- Drivers (Sürücülər) ----------
+  let driverPurchaseType = NUT_TYPES[0];
+  let driverPurchasePaid = false;
+
+  function renderDriversTab() {
+    const date = state.driversDate;
+    const summaries = buildDriverSummaries(date);
+    const advDay = state.driverAdvances.filter((a) => a.date === date);
+    const purchDay = state.driverPurchases.filter((p) => p.date === date);
+
+    const driverOptions = state.drivers.map((d) => `<option value="${esc(d.name)}"></option>`).join("");
+
+    return `
+      <div class="section"><div class="section-title">Tarix</div>
+        <div class="field-row"><div class="field"><input id="driversDate" type="date" value="${esc(date)}" /></div></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Sürücülər</div>
+        <div class="field-row"><div class="field"><input id="driverNameInput" placeholder="Sürücünün adı" /></div></div>
+        <div style="margin-bottom:10px;"><button class="btn-outline" id="addDriverBtn">${ICONS.plus} Sürücü əlavə et</button></div>
+        <div>
+          ${
+            state.drivers.length === 0
+              ? '<div class="empty">Hələ sürücü əlavə edilməyib</div>'
+              : state.drivers.map((d) => `
+                <span class="chip" style="cursor:default;">${esc(d.name)}
+                  <button data-del-driver="${d.id}" style="background:none;border:none;color:var(--red);opacity:0.6;cursor:pointer;margin-left:4px;">✕</button>
+                </span>`).join("")
+          }
+        </div>
+      </div>
+
+      <datalist id="driverNamesList">${driverOptions}</datalist>
+
+      <div class="section">
+        <div class="section-title">Sürücüyə avans ver (səhər)</div>
+        <div class="field-row"><div class="field"><label>Sürücü</label><input id="advDriver" list="driverNamesList" placeholder="Ad" /></div></div>
+        <div class="field-row"><div class="field"><label>Məbləğ</label><input id="advSum" type="number" inputmode="decimal" placeholder="0" /></div></div>
+        <div class="field-row"><div class="field"><label>Qeyd</label><input id="advNote" placeholder="məcburi deyil" /></div></div>
+        <button class="btn red" id="advSubmit">${ICONS.plus} Avansı qeyd et</button>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Sürücü alışı</div>
+        <div class="field-row"><div class="field"><label>Sürücü</label><input id="dpDriver" list="driverNamesList" placeholder="Ad" /></div></div>
+        <div class="field-row"><div class="field"><label>Kimdən aldı (məcburi deyil)</label><input id="dpSeller" placeholder="Satıcının adı" /></div></div>
+        <div class="toggle-row">
+          ${NUT_TYPES.map((t) => `<button class="toggle-btn ${driverPurchaseType === t ? "active-ink" : ""}" data-dp-type="${esc(t)}">${esc(t)}</button>`).join("")}
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Kq</label><input id="dpKg" type="number" inputmode="decimal" placeholder="0" /></div>
+          <div class="field"><label>Kisə sayı</label><input id="dpBags" type="number" inputmode="decimal" placeholder="0" /></div>
+        </div>
+        <div class="field-row"><div class="field"><label>Məbləğ</label><input id="dpSum" type="number" inputmode="decimal" placeholder="0" /></div></div>
+        <div class="toggle-row">
+          <button class="toggle-btn ${driverPurchasePaid ? "active-green" : ""}" id="dpPaidBtn">${driverPurchasePaid ? "Ödənilib" : "Ödənilməyib"}</button>
+        </div>
+        <div class="field-row"><div class="field"><label>Qeyd</label><input id="dpNote" placeholder="məcburi deyil" /></div></div>
+        <button class="btn" id="dpSubmit">${ICONS.plus} Sürücü alışını qeyd et</button>
+      </div>
+
+      <div class="section">
+        <div class="section-title">${esc(date)} — günün hesabı</div>
+        ${
+          summaries.length === 0
+            ? '<div class="empty">Bu tarixdə sürücü fəaliyyəti yoxdur</div>'
+            : summaries.map((s) => `
+              <div class="card-box">
+                <div style="font-weight:700;color:var(--ink);margin-bottom:6px;">${esc(s.driver)}</div>
+                <div style="font-size:13px;color:var(--ink-soft);line-height:1.7;">
+                  Avans: <b>${fmt(s.advance)}</b><br/>
+                  Aldığı: <b>${fmt(s.kg)} kq</b>${s.bags ? `, ${fmt(s.bags)} kisə` : ""}, xərclədiyi <b>${fmt(s.spent)}</b><br/>
+                  Qalıq: <b style="color:${s.remaining > 0 ? "var(--green)" : s.remaining < 0 ? "var(--red)" : "var(--ink)"};">${fmt(s.remaining)}</b>
+                  ${s.remaining > 0 ? " (bizə qaytarmalıdır)" : s.remaining < 0 ? " (biz ona borcluyuq)" : ""}
+                </div>
+                <div style="margin-top:8px;">
+                  ${
+                    s.settled
+                      ? `<button class="btn-outline" data-undo-settle="${s.settlementId}" style="width:auto;padding:6px 14px;font-size:12.5px;">Geri qaytar (hesab açıq idi)</button>`
+                      : s.remaining !== 0
+                      ? `<button class="btn ${s.remaining > 0 ? "green" : "red"}" style="width:auto;padding:8px 16px;font-size:13px;" data-settle-driver="${esc(s.driver)}" data-settle-remaining="${s.remaining}">${s.remaining > 0 ? "Qaytarıldı" : "Ödənildi"}</button>`
+                      : `<button class="btn-outline" style="width:auto;padding:6px 14px;font-size:12.5px;" data-settle-driver="${esc(s.driver)}" data-settle-remaining="0">Hesabı bağla</button>`
+                  }
+                </div>
+              </div>
+            `).join("")
+        }
+      </div>
+
+      <div class="section">
+        <div class="section-title">Avans tarixçəsi (${advDay.length})</div>
+        ${
+          advDay.length === 0
+            ? '<div class="empty">Hələlik boşdur</div>'
+            : [...advDay].reverse().map((a) => `
+              <div class="list-row">
+                <div><div class="title">${esc(a.driver)}</div><div class="meta">${esc(a.date)}${a.note ? " · " + esc(a.note) : ""}</div></div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <div class="right red">−${fmt(a.sum)}</div>
+                  <button class="del-btn" data-del-adv="${a.id}">${ICONS.trash}</button>
+                </div>
+              </div>`).join("")
+        }
+      </div>
+
+      <div class="section">
+        <div class="section-title">Sürücü alışları (${purchDay.length})</div>
+        ${
+          purchDay.length === 0
+            ? '<div class="empty">Hələlik boşdur</div>'
+            : [...purchDay].reverse().map((p) => `
+              <div class="list-row">
+                <div>
+                  <div class="title">${esc(p.driver)}${p.seller ? " ← " + esc(p.seller) : ""} — ${fmt(p.kg)} kq${p.bags ? " (" + p.bags + " kisə)" : ""} · ${esc(p.type || "")}</div>
+                  <div class="meta">${esc(p.date)}${p.time ? " · " + esc(p.time) : ""}${p.note ? " · " + esc(p.note) : ""}</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <div class="right">${fmt(p.sum)}</div>
+                  <button class="btn-outline" style="width:auto;padding:4px 8px;font-size:11px;" data-toggle-dp-paid="${p.id}">${p.paid ? "Ödənilib" : "Ödənilməyib"}</button>
+                  <button class="del-btn" data-del-dp="${p.id}">${ICONS.trash}</button>
+                </div>
+              </div>`).join("")
+        }
+      </div>
+    `;
+  }
+
   // ---------- Report ----------
   function buildReportData(reportDate) {
     const purchases = state.purchases.filter((p) => p.date === reportDate);
@@ -912,7 +1225,6 @@
     const truckDay = state.truckLoads.filter((t) => t.date === reportDate);
 
     const totalKg = purchases.reduce((s, p) => s + p.kg, 0);
-    const totalBags = purchases.reduce((s, p) => s + (p.bags || 0), 0);
     const totalPurchaseSum = purchases.reduce((s, p) => s + p.sum, 0);
     const totalSalesKg = sales.reduce((s, x) => s + x.kg, 0);
     const totalSalesSum = sales.reduce((s, x) => s + x.sum, 0);
@@ -921,8 +1233,11 @@
     const cashOut = cashLog.filter((c) => c.type === "out").reduce((s, c) => s + c.sum, 0);
     const truckTotalKg = truckDay.reduce((s, t) => s + t.entries.reduce((s2, e) => s2 + e.kg, 0), 0);
     const truckTotalBags = truckDay.reduce((s, t) => s + t.entries.reduce((s2, e) => s2 + e.bags, 0), 0);
+    const driverAdvancesDay = state.driverAdvances.filter((a) => a.date === reportDate);
+    const driverPurchasesDay = state.driverPurchases.filter((p) => p.date === reportDate);
+    const driverSummaries = buildDriverSummaries(reportDate);
 
-    return { purchases, sales, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalBags, totalPurchaseSum, totalSalesKg, totalSalesSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags };
+    return { purchases, sales, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalPurchaseSum, totalSalesKg, totalSalesSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags, driverAdvancesDay, driverPurchasesDay, driverSummaries };
   }
 
   function buildReportText(reportDate) {
@@ -932,12 +1247,15 @@
 👷 Davamiyyət: ${r.attendanceDay.length ? r.attendanceDay.map((a) => a.person).join(", ") : "qeyd yoxdur"} (${r.attendanceDay.length} nəfər)
 
 🌰 Qoz-fındıq alışı:
-${r.purchases.length ? r.purchases.map((p) => `• ${p.supplier}: ${fmt(p.kg)} kq${p.bags ? " (" + p.bags + " kisə)" : ""} = ${fmt(p.sum)} [${p.type || ""}]${p.time ? " · " + p.time : ""}`).join("\n") : "qeyd yoxdur"}
-Cəmi: ${fmt(r.totalKg)} kq, ${fmt(r.totalBags)} kisə, məbləğ ${fmt(r.totalPurchaseSum)}
+${r.purchases.length ? r.purchases.map((p) => `• ${p.supplier}: ${fmt(p.kg)} kq = ${fmt(p.sum)} [${p.type || ""}]${p.time ? " · " + p.time : ""}`).join("\n") : "qeyd yoxdur"}
+Cəmi: ${fmt(r.totalKg)} kq, məbləğ ${fmt(r.totalPurchaseSum)}
 
 🛒 Satışlar:
-${r.sales.length ? r.sales.map((s) => `• ${s.buyer}: ${fmt(s.kg)} kq${s.bags ? " (" + s.bags + " kisə)" : ""} = ${fmt(s.sum)} [${s.type || ""}]${s.time ? " · " + s.time : ""}`).join("\n") : "qeyd yoxdur"}
+${r.sales.length ? r.sales.map((s) => `• ${s.buyer}: ${fmt(s.kg)} kq = ${fmt(s.sum)} [${s.type || ""}]${s.time ? " · " + s.time : ""}`).join("\n") : "qeyd yoxdur"}
 Cəmi: ${fmt(r.totalSalesKg)} kq, məbləğ ${fmt(r.totalSalesSum)}
+
+🚗 Sürücülər:
+${r.driverSummaries.length ? r.driverSummaries.map((d) => `• ${d.driver}: avans ${fmt(d.advance)}, aldığı ${fmt(d.kg)} kq / ${fmt(d.bags)} kisə / ${fmt(d.spent)} manat — qalıq ${fmt(d.remaining)}${d.settled ? " (bağlıdır)" : ""}`).join("\n") : "qeyd yoxdur"}
 
 💵 Kassa:
 Mədaxil: +${fmt(r.cashIn)}
@@ -980,12 +1298,12 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
     const r = buildReportData(reportDate);
     const wb = XLSX.utils.book_new();
 
-    const purchaseRows = r.purchases.map((p) => ({ Tarix: p.date, Vaxt: p.time || "", "Kim təhvil verdi": p.supplier, Kq: p.kg, "Kisə sayı": p.bags || 0, Növ: p.type || "", "Orta qiymət (kq)": p.price || "", Məbləğ: p.sum, Qeyd: p.note || "" }));
-    if (purchaseRows.length) purchaseRows.push({ Tarix: "", Vaxt: "", "Kim təhvil verdi": "CƏMİ", Kq: r.totalKg, "Kisə sayı": r.totalBags, Növ: "", "Orta qiymət (kq)": "", Məbləğ: r.totalPurchaseSum, Qeyd: "" });
+    const purchaseRows = r.purchases.map((p) => ({ Tarix: p.date, Vaxt: p.time || "", "Kim təhvil verdi": p.supplier, Kq: p.kg, Növ: p.type || "", "Orta qiymət (kq)": p.price || "", Məbləğ: p.sum, Qeyd: p.note || "" }));
+    if (purchaseRows.length) purchaseRows.push({ Tarix: "", Vaxt: "", "Kim təhvil verdi": "CƏMİ", Kq: r.totalKg, Növ: "", "Orta qiymət (kq)": "", Məbləğ: r.totalPurchaseSum, Qeyd: "" });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(purchaseRows.length ? purchaseRows : [{ Tarix: reportDate, Qeyd: "qeyd yoxdur" }]), "Alışlar");
 
-    const saleRows = r.sales.map((s) => ({ Tarix: s.date, Vaxt: s.time || "", "Kim aldı": s.buyer, Kq: s.kg, "Kisə sayı": s.bags || 0, Növ: s.type || "", Məbləğ: s.sum, Qeyd: s.note || "" }));
-    if (saleRows.length) saleRows.push({ Tarix: "", Vaxt: "", "Kim aldı": "CƏMİ", Kq: r.totalSalesKg, "Kisə sayı": "", Növ: "", Məbləğ: r.totalSalesSum, Qeyd: "" });
+    const saleRows = r.sales.map((s) => ({ Tarix: s.date, Vaxt: s.time || "", "Kim aldı": s.buyer, Kq: s.kg, Növ: s.type || "", Məbləğ: s.sum, Qeyd: s.note || "" }));
+    if (saleRows.length) saleRows.push({ Tarix: "", Vaxt: "", "Kim aldı": "CƏMİ", Kq: r.totalSalesKg, Növ: "", Məbləğ: r.totalSalesSum, Qeyd: "" });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(saleRows.length ? saleRows : [{ Tarix: reportDate, Qeyd: "qeyd yoxdur" }]), "Satışlar");
 
     const expenseRows = r.expenses.map((e) => ({ Tarix: e.date, Maddə: e.category, Məbləğ: e.sum, Qeyd: e.note || "" }));
@@ -1011,11 +1329,19 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
     if (truckRows.length) truckRows.push({ Tarix: "", Sürücü: "CƏMİ", "Kim təhvil verib": "", "Maşında kq": r.truckTotalKg, "Kisə sayı": r.truckTotalBags, "Alışda qeyd olunan kq": "", "Fərq (kq)": "" });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(truckRows.length ? truckRows : [{ Tarix: reportDate, Sürücü: "qeyd yoxdur" }]), "Maşın");
 
+    const driverAdvRows = r.driverAdvancesDay.map((a) => ({ Tarix: a.date, Sürücü: a.driver, Məbləğ: a.sum, Qeyd: a.note || "" }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(driverAdvRows.length ? driverAdvRows : [{ Tarix: reportDate, Sürücü: "qeyd yoxdur" }]), "Sürücü avansı");
+
+    const driverPurchRows = r.driverPurchasesDay.map((p) => ({ Tarix: p.date, Vaxt: p.time || "", Sürücü: p.driver, "Kimdən aldı": p.seller || "", Kq: p.kg, "Kisə sayı": p.bags || 0, Növ: p.type || "", Məbləğ: p.sum, Ödənilib: p.paid ? "Bəli" : "Xeyr", Qeyd: p.note || "" }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(driverPurchRows.length ? driverPurchRows : [{ Tarix: reportDate, Sürücü: "qeyd yoxdur" }]), "Sürücü alışları");
+
+    const driverSummaryRows = r.driverSummaries.map((d) => ({ Sürücü: d.driver, Avans: d.advance, "Aldığı (kq)": d.kg, "Kisə sayı": d.bags, "Xərclədiyi məbləğ": d.spent, Qalıq: d.remaining, Vəziyyət: d.settled ? "Bağlıdır" : (d.remaining > 0 ? "Bizə qaytarmalıdır" : d.remaining < 0 ? "Biz ona borcluyuq" : "Sıfırdır") }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(driverSummaryRows.length ? driverSummaryRows : [{ Sürücü: "qeyd yoxdur" }]), "Sürücü hesabı");
+
     const wsSummary = XLSX.utils.json_to_sheet([
       { Göstərici: "Tarix", Dəyər: reportDate },
       { Göstərici: "İşdə olanlar", Dəyər: r.attendanceDay.length },
       { Göstərici: "Alınan miqdar (kq)", Dəyər: r.totalKg },
-      { Göstərici: "Alınan kisə sayı", Dəyər: r.totalBags },
       { Göstərici: "Alış məbləği", Dəyər: r.totalPurchaseSum },
       { Göstərici: "Satış miqdarı (kq)", Dəyər: r.totalSalesKg },
       { Göstərici: "Satış məbləği", Dəyər: r.totalSalesSum },
@@ -1033,8 +1359,8 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
 
   function downloadAllExcel() {
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.purchases.map((p) => ({ Tarix: p.date, Vaxt: p.time || "", "Kim təhvil verdi": p.supplier, Kq: p.kg, "Kisə sayı": p.bags || 0, Növ: p.type || "", "Orta qiymət (kq)": p.price || "", Məbləğ: p.sum, Qeyd: p.note || "" }))), "Alışlar");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.sales.map((s) => ({ Tarix: s.date, Vaxt: s.time || "", "Kim aldı": s.buyer, Kq: s.kg, "Kisə sayı": s.bags || 0, Növ: s.type || "", Məbləğ: s.sum, Qeyd: s.note || "" }))), "Satışlar");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.purchases.map((p) => ({ Tarix: p.date, Vaxt: p.time || "", "Kim təhvil verdi": p.supplier, Kq: p.kg, Növ: p.type || "", "Orta qiymət (kq)": p.price || "", Məbləğ: p.sum, Qeyd: p.note || "" }))), "Alışlar");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.sales.map((s) => ({ Tarix: s.date, Vaxt: s.time || "", "Kim aldı": s.buyer, Kq: s.kg, Növ: s.type || "", Məbləğ: s.sum, Qeyd: s.note || "" }))), "Satışlar");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.expenses.map((e) => ({ Tarix: e.date, Maddə: e.category, Məbləğ: e.sum, Qeyd: e.note || "" }))), "Xərclər");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.cashLog.map((c) => ({ Tarix: c.date, Növ: c.type === "in" ? "Mədaxil" : "Çıxarış", Məbləğ: c.sum, Qeyd: c.note || "" }))), "Kassa");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.debts.map((d) => ({ Tarix: d.date, Ad: d.person, Məbləğ: d.sum, İstiqamət: d.direction === "gave" ? "Bizə borcludur" : "Biz borcluyuq", Ödənilib: d.paid ? "Bəli" : "Xeyr", Qeyd: d.note || "" }))), "Borclar");
@@ -1047,6 +1373,8 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
       });
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(truckRowsAll.length ? truckRowsAll : [{ Tarix: "", Sürücü: "qeyd yoxdur" }]), "Maşın");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.driverAdvances.map((a) => ({ Tarix: a.date, Sürücü: a.driver, Məbləğ: a.sum, Qeyd: a.note || "" }))), "Sürücü avansı");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.driverPurchases.map((p) => ({ Tarix: p.date, Vaxt: p.time || "", Sürücü: p.driver, "Kimdən aldı": p.seller || "", Kq: p.kg, "Kisə sayı": p.bags || 0, Növ: p.type || "", Məbləğ: p.sum, Ödənilib: p.paid ? "Bəli" : "Xeyr", Qeyd: p.note || "" }))), "Sürücü alışları");
     XLSX.writeFile(wb, `hamisi_${todayISO()}.xlsx`);
   }
 
@@ -1059,6 +1387,7 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
     else if (state.tab === "debts") wireDebts();
     else if (state.tab === "attendance") wireAttendance();
     else if (state.tab === "truck") wireTruck();
+    else if (state.tab === "drivers") wireDrivers();
     else if (state.tab === "report") wireReport();
   }
 
@@ -1101,10 +1430,9 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
       const sum = Number(document.getElementById("pSum").value);
       if (!kg || !sum) return;
       const supplier = document.getElementById("pSupplier").value.trim() || "Adsız";
-      const bags = Number(document.getElementById("pBags").value) || 0;
       const note = document.getElementById("pNote").value;
       const price = Number((sum / kg).toFixed(2));
-      await addPurchase({ supplier, kg, bags, type: purchaseType, price, sum, note });
+      await addPurchase({ supplier, kg, type: purchaseType, price, sum, note });
     };
     document.querySelectorAll("[data-del-purchase]").forEach((btn) => {
       btn.onclick = () => deletePurchase(btn.dataset.delPurchase);
@@ -1120,13 +1448,19 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
       const sum = Number(document.getElementById("sSum").value);
       if (!kg || !sum) return;
       const buyer = document.getElementById("sBuyer").value.trim() || "Adsız";
-      const bags = Number(document.getElementById("sBags").value) || 0;
       const note = document.getElementById("sNote").value;
-      await addSale({ buyer, kg, bags, type: saleType, sum, note });
+      await addSale({ buyer, kg, type: saleType, sum, note });
     };
     document.querySelectorAll("[data-del-sale]").forEach((btn) => {
       btn.onclick = () => deleteSale(btn.dataset.delSale);
     });
+    document.getElementById("salesTemplateBtn").onclick = downloadSalesTemplate;
+    document.getElementById("salesImportFile").onchange = (e) => {
+      const file = e.target.files[0];
+      if (file) handleSalesFile(file);
+    };
+    const importConfirmBtn = document.getElementById("salesImportConfirm");
+    if (importConfirmBtn) importConfirmBtn.onclick = commitSalesImport;
   }
 
   function wireExpenses() {
@@ -1231,6 +1565,64 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
     };
     document.querySelectorAll("[data-del-truck]").forEach((btn) => {
       btn.onclick = () => deleteTruckLoad(btn.dataset.delTruck);
+    });
+  }
+
+  function wireDrivers() {
+    document.getElementById("driversDate").onchange = (e) => { state.driversDate = e.target.value; renderTabContent(); };
+
+    document.getElementById("addDriverBtn").onclick = async () => {
+      const name = document.getElementById("driverNameInput").value.trim();
+      if (!name) return;
+      await addDriver(name);
+      document.getElementById("driverNameInput").value = "";
+    };
+    document.querySelectorAll("[data-del-driver]").forEach((btn) => {
+      btn.onclick = () => removeDriver(btn.dataset.delDriver);
+    });
+
+    document.getElementById("advSubmit").onclick = async () => {
+      const driver = document.getElementById("advDriver").value.trim();
+      const sum = Number(document.getElementById("advSum").value);
+      if (!driver || !sum) return;
+      const note = document.getElementById("advNote").value;
+      await addDriverAdvance({ driver, sum, note });
+      document.getElementById("advDriver").value = "";
+      document.getElementById("advSum").value = "";
+      document.getElementById("advNote").value = "";
+    };
+    document.querySelectorAll("[data-del-adv]").forEach((btn) => {
+      btn.onclick = () => deleteDriverAdvance(btn.dataset.delAdv);
+    });
+
+    document.querySelectorAll("[data-dp-type]").forEach((btn) => {
+      btn.onclick = () => { driverPurchaseType = btn.dataset.dpType; renderTabContent(); };
+    });
+    document.getElementById("dpPaidBtn").onclick = () => { driverPurchasePaid = !driverPurchasePaid; renderTabContent(); };
+    document.getElementById("dpSubmit").onclick = async () => {
+      const driver = document.getElementById("dpDriver").value.trim();
+      const kg = Number(document.getElementById("dpKg").value);
+      const sum = Number(document.getElementById("dpSum").value);
+      if (!driver || !kg || !sum) return;
+      const seller = document.getElementById("dpSeller").value.trim();
+      const bags = Number(document.getElementById("dpBags").value) || 0;
+      const note = document.getElementById("dpNote").value;
+      await addDriverPurchase({ driver, seller, kg, bags, type: driverPurchaseType, sum, paid: driverPurchasePaid, note });
+      driverPurchasePaid = false;
+      renderTabContent();
+    };
+    document.querySelectorAll("[data-toggle-dp-paid]").forEach((btn) => {
+      btn.onclick = () => toggleDriverPurchasePaid(btn.dataset.toggleDpPaid);
+    });
+    document.querySelectorAll("[data-del-dp]").forEach((btn) => {
+      btn.onclick = () => deleteDriverPurchase(btn.dataset.delDp);
+    });
+
+    document.querySelectorAll("[data-settle-driver]").forEach((btn) => {
+      btn.onclick = () => settleDriver(btn.dataset.settleDriver, state.driversDate, Number(btn.dataset.settleRemaining));
+    });
+    document.querySelectorAll("[data-undo-settle]").forEach((btn) => {
+      btn.onclick = () => undoSettleDriver(btn.dataset.undoSettle);
     });
   }
 
