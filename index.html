@@ -233,13 +233,14 @@
     driverAdvances: [],
     driverPurchases: [],
     driverSettlements: [],
-    dataLoaded: { purchases: false, sales: false, expenses: false, debts: false, cashLog: false, attendance: false, truckLoads: false, drivers: false, driverAdvances: false, driverPurchases: false, driverSettlements: false },
+    workers: [],
+    dataLoaded: { purchases: false, sales: false, expenses: false, debts: false, cashLog: false, attendance: false, truckLoads: false, drivers: false, driverAdvances: false, driverPurchases: false, driverSettlements: false, workers: false },
     // ephemeral form state per tab (kept simple, re-read from DOM on submit)
     reportDate: todayISO(),
     debtSearch: "",
     truckDate: todayISO(),
     truckEntries: [{ id: uid(), supplier: "", kg: "", bags: "" }],
-    attendanceDate: todayISO(),
+    attendanceMonth: todayISO().slice(0, 7),
     salesImportPending: [],
     salesImportSkipped: 0,
     salesImportFileName: "",
@@ -320,6 +321,7 @@
     attachListener("driverAdvances", "driverAdvances");
     attachListener("driverPurchases", "driverPurchases");
     attachListener("driverSettlements", "driverSettlements");
+    attachListener("workers", "workers");
   }
 
   function cashBalance() {
@@ -521,6 +523,27 @@
   }
   async function removeAttendance(id) {
     await deleteDoc("attendance", id);
+  }
+  async function toggleAttendanceCell(person, date) {
+    const existing = state.attendance.find((a) => a.date === date && a.person === person);
+    if (existing) {
+      await removeAttendance(existing.id);
+    } else {
+      await addAttendance({ date, person });
+    }
+  }
+
+  async function addWorker(name) {
+    if (state.workers.some((w) => w.name.toLowerCase() === name.toLowerCase())) return;
+    await addDoc("workers", { name });
+  }
+  async function removeWorker(id) {
+    await deleteDoc("workers", id);
+  }
+
+  function daysInMonth(yearMonth) {
+    const [y, m] = yearMonth.split("-").map(Number);
+    return new Date(y, m, 0).getDate();
   }
 
   async function addTruckLoad(t) {
@@ -974,32 +997,66 @@
 
   // ---------- Attendance ----------
   function renderAttendanceTab() {
-    const dayList = state.attendance.filter((a) => a.date === state.attendanceDate);
-    const knownNames = Array.from(new Set(state.attendance.map((a) => a.person))).sort();
+    const month = state.attendanceMonth;
+    const numDays = daysInMonth(month);
+    const days = Array.from({ length: numDays }, (_, i) => i + 1);
+    const monthAttendance = state.attendance.filter((a) => a.date.startsWith(month));
+    const presentSet = new Set(monthAttendance.map((a) => a.date + "|" + a.person));
+    const totals = {};
+    state.workers.forEach((w) => { totals[w.name] = monthAttendance.filter((a) => a.person === w.name).length; });
+
     return `
-      <div class="stat-row"><div class="stat-card"><div class="stat-label">${ICONS.package}Bu gün işdə olanlar</div><div class="stat-value">${dayList.length}</div></div></div>
-      <div class="section"><div class="section-title">Tarix</div>
-        <div class="field-row"><div class="field"><input id="attDate" type="date" value="${esc(state.attendanceDate)}" /></div></div>
+      <div class="section"><div class="section-title">Ay</div>
+        <div class="field-row"><div class="field"><input id="attMonth" type="month" value="${esc(month)}" /></div></div>
       </div>
+
       <div class="section">
-        <div class="section-title">İşçi əlavə et</div>
-        <div class="field-row"><div class="field"><input id="attName" placeholder="Ad" /></div></div>
-        ${knownNames.length ? `<div style="margin-bottom:10px;">${knownNames.map((n) => `<span class="chip" data-known-name="${esc(n)}">${esc(n)}</span>`).join("")}</div>` : ""}
-        <button class="btn" id="attSubmit">${ICONS.plus} Davamiyyətə əlavə et</button>
+        <div class="section-title">İşçilər</div>
+        <div class="field-row"><div class="field"><input id="workerNameInput" placeholder="Ad" /></div></div>
+        <div style="margin-bottom:10px;"><button class="btn-outline" id="addWorkerBtn">${ICONS.plus} İşçi əlavə et</button></div>
+        <div>
+          ${
+            state.workers.length === 0
+              ? '<div class="empty">Hələ işçi əlavə edilməyib</div>'
+              : state.workers.map((w) => `
+                <span class="chip" style="cursor:default;">${esc(w.name)}
+                  <button data-del-worker="${w.id}" style="background:none;border:none;color:var(--red);opacity:0.6;cursor:pointer;margin-left:4px;">✕</button>
+                </span>`).join("")
+          }
+        </div>
       </div>
+
       <div class="section">
-        <div class="section-title">${esc(state.attendanceDate)} tarixində işdə olanlar (${dayList.length})</div>
+        <div class="section-title">Davamiyyət cədvəli — ${esc(month)}</div>
         ${
-          dayList.length === 0
-            ? '<div class="empty">Hələ heç kim əlavə edilməyib</div>'
-            : dayList.map((a) => `
-              <div class="list-row">
-                <div><div class="title">${esc(a.person)}</div><div class="meta">${esc(a.date)}</div></div>
-                <div style="display:flex;align-items:center;gap:10px;">
-                  <div class="right green">✓</div>
-                  <button class="del-btn" data-del-att="${a.id}">${ICONS.trash}</button>
-                </div>
-              </div>`).join("")
+          state.workers.length === 0
+            ? '<div class="empty">Əvvəlcə işçi əlavə edin</div>'
+            : `<div style="overflow-x:auto; -webkit-overflow-scrolling:touch; border:1px solid var(--line-soft); border-radius:10px;">
+                <table style="border-collapse:collapse; font-size:12px; white-space:nowrap; width:100%;">
+                  <thead>
+                    <tr>
+                      <th style="position:sticky; left:0; background:var(--white); padding:8px 12px; text-align:left; border-bottom:1.5px solid var(--line); z-index:2;">Ad</th>
+                      ${days.map((d) => `<th style="padding:6px 5px; text-align:center; border-bottom:1.5px solid var(--line); color:var(--muted); font-weight:600;">${d}</th>`).join("")}
+                      <th style="padding:8px 12px; text-align:center; border-bottom:1.5px solid var(--line); color:var(--ink); font-weight:700; background:var(--card);">Cəmi</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${state.workers.map((w) => `
+                      <tr>
+                        <td style="position:sticky; left:0; background:var(--white); padding:8px 12px; font-weight:600; border-bottom:1px solid var(--line-soft);">${esc(w.name)}</td>
+                        ${days.map((d) => {
+                          const dateStr = `${month}-${String(d).padStart(2, "0")}`;
+                          const present = presentSet.has(dateStr + "|" + w.name);
+                          return `<td style="padding:3px; text-align:center; border-bottom:1px solid var(--line-soft);">
+                            <button data-att-cell="${esc(w.name)}|${dateStr}" style="width:24px;height:24px;border-radius:6px;border:1.5px solid ${present ? "var(--green)" : "var(--line)"};background:${present ? "var(--green-bg)" : "#fff"};color:${present ? "var(--green)" : "var(--muted)"};cursor:pointer;font-weight:700;font-size:12px;line-height:1;">${present ? "✓" : ""}</button>
+                          </td>`;
+                        }).join("")}
+                        <td style="padding:8px 12px; text-align:center; font-weight:700; color:var(--ink); border-bottom:1px solid var(--line-soft); background:var(--card);">${totals[w.name] || 0}</td>
+                      </tr>
+                    `).join("")}
+                  </tbody>
+                </table>
+              </div>`
         }
       </div>
     `;
@@ -1501,19 +1558,21 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
   }
 
   function wireAttendance() {
-    document.getElementById("attDate").onchange = (e) => { state.attendanceDate = e.target.value; renderTabContent(); };
-    document.querySelectorAll("[data-known-name]").forEach((chip) => {
-      chip.onclick = () => { document.getElementById("attName").value = chip.dataset.knownName; };
-    });
-    document.getElementById("attSubmit").onclick = async () => {
-      const name = document.getElementById("attName").value.trim();
+    document.getElementById("attMonth").onchange = (e) => { state.attendanceMonth = e.target.value; renderTabContent(); };
+    document.getElementById("addWorkerBtn").onclick = async () => {
+      const name = document.getElementById("workerNameInput").value.trim();
       if (!name) return;
-      const dayList = state.attendance.filter((a) => a.date === state.attendanceDate);
-      if (dayList.some((a) => a.person.toLowerCase() === name.toLowerCase())) return;
-      await addAttendance({ date: state.attendanceDate, person: name });
+      await addWorker(name);
+      document.getElementById("workerNameInput").value = "";
     };
-    document.querySelectorAll("[data-del-att]").forEach((btn) => {
-      btn.onclick = () => removeAttendance(btn.dataset.delAtt);
+    document.querySelectorAll("[data-del-worker]").forEach((btn) => {
+      btn.onclick = () => removeWorker(btn.dataset.delWorker);
+    });
+    document.querySelectorAll("[data-att-cell]").forEach((btn) => {
+      btn.onclick = () => {
+        const [person, date] = btn.dataset.attCell.split("|");
+        toggleAttendanceCell(person, date);
+      };
     });
   }
 
