@@ -379,12 +379,25 @@
   async function toggleDebtPaid(id) {
     const d = state.debts.find((x) => x.id === id);
     if (!d) return;
-    await updateDoc("debts", id, { paid: !d.paid });
+    if (!d.paid) {
+      // Marking as paid: money actually moves — reflect it in the cash register
+      const type = d.direction === "gave" ? "in" : "out";
+      const note = "Borc qaytarıldı: " + d.person;
+      const cashRef = await addDoc("cashLog", { date: todayISO(), type, sum: d.sum, note });
+      await updateDoc("debts", id, { paid: true, repayCashLogId: cashRef ? cashRef.id : null });
+    } else {
+      // Undo: remove the repayment's cash effect
+      if (d.repayCashLogId) await deleteDoc("cashLog", d.repayCashLogId);
+      await updateDoc("debts", id, { paid: false, repayCashLogId: null });
+    }
   }
   async function deleteDebtFn(id) {
     const d = state.debts.find((x) => x.id === id);
     await deleteDoc("debts", id);
-    if (d) await removeLinkedCash(d, d.direction === "gave" ? "in" : "out", "Borc ləğv edildi: " + d.person);
+    if (d) {
+      await removeLinkedCash(d, d.direction === "gave" ? "in" : "out", "Borc ləğv edildi: " + d.person);
+      if (d.repayCashLogId) await deleteDoc("cashLog", d.repayCashLogId);
+    }
   }
 
   async function addCashLog(c) {
