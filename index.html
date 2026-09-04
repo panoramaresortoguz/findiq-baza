@@ -204,10 +204,11 @@
   }
 
   const NUT_TYPES = ["Pasos", "Əl fındığı", "Digər"];
+  const FUEL_TYPES = ["Dizel", "Benzin"];
   const QUICK_EXPENSE_CATS = ["Kirayə", "Nəqliyyat", "Sənəd/pasport", "Təmizlik", "İnventar", "Əmək haqqı"];
 
   function normalizeHeader(h) {
-    return String(h || "").trim().toLowerCase()
+    return String(h || "").trim().replace(/İ/g, "i").toLowerCase()
       .replace(/ə/g, "e").replace(/ı/g, "i").replace(/ö/g, "o").replace(/ü/g, "u").replace(/ç/g, "c").replace(/ş/g, "s").replace(/ğ/g, "g");
   }
   const SALES_HEADER_MAP = {
@@ -238,7 +239,9 @@
     driverPurchases: [],
     driverSettlements: [],
     workers: [],
-    dataLoaded: { purchases: false, sales: false, expenses: false, debts: false, cashLog: false, attendance: false, truckLoads: false, drivers: false, driverAdvances: false, driverPurchases: false, driverSettlements: false, workers: false },
+    tractorists: [],
+    fuelLog: [],
+    dataLoaded: { purchases: false, sales: false, expenses: false, debts: false, cashLog: false, attendance: false, truckLoads: false, drivers: false, driverAdvances: false, driverPurchases: false, driverSettlements: false, workers: false, tractorists: false, fuelLog: false },
     // ephemeral form state per tab (kept simple, re-read from DOM on submit)
     reportDate: todayISO(),
     debtSearch: "",
@@ -249,6 +252,9 @@
     salesImportSkipped: 0,
     salesImportFileName: "",
     driversDate: todayISO(),
+    fuelMonth: todayISO().slice(0, 7),
+    masterImportPending: null,
+    masterImportFileName: "",
   };
 
   function todayISO() {
@@ -297,7 +303,7 @@
     { id: "expenses", label: "Xərclər", icon: "receipt", ownerOnly: true },
     { id: "debts", label: "Borclar", icon: "hand", ownerOnly: true },
     { id: "attendance", label: "Davamiyyət", icon: "calendar", ownerOnly: true },
-    { id: "truck", label: "Maşın", icon: "truck", ownerOnly: true },
+    { id: "truck", label: "Nəqliyyat", icon: "truck", ownerOnly: true },
     { id: "drivers", label: "Sürücülər", icon: "driver", ownerOnly: true },
   ];
 
@@ -331,6 +337,8 @@
     attachListener("driverPurchases", "driverPurchases");
     attachListener("driverSettlements", "driverSettlements");
     attachListener("workers", "workers");
+    attachListener("tractorists", "tractorists");
+    attachListener("fuelLog", "fuelLog");
   }
 
   function cashBalance() {
@@ -378,8 +386,10 @@
   }
 
   async function addPurchase(p) {
-    const cashRef = await logCash(todayISO(), "out", p.sum, "Alış: " + p.supplier);
-    const entry = { date: todayISO(), time: nowTime(), ...p, cashLogId: cashRef ? cashRef.id : null };
+    const date = p.date || todayISO();
+    const time = p.time || nowTime();
+    const cashRef = await logCash(date, "out", p.sum, "Alış: " + p.supplier);
+    const entry = { ...p, date, time, cashLogId: cashRef ? cashRef.id : null };
     await addDoc("purchases", entry);
   }
   async function deletePurchase(id) {
@@ -389,8 +399,10 @@
   }
 
   async function addSale(s) {
-    const cashRef = await logCash(todayISO(), "in", s.sum, "Satış: " + s.buyer);
-    const entry = { date: todayISO(), time: nowTime(), ...s, cashLogId: cashRef ? cashRef.id : null };
+    const date = s.date || todayISO();
+    const time = s.time || nowTime();
+    const cashRef = await logCash(date, "in", s.sum, "Satış: " + s.buyer);
+    const entry = { ...s, date, time, cashLogId: cashRef ? cashRef.id : null };
     await addDoc("sales", entry);
   }
   async function deleteSale(id) {
@@ -406,6 +418,233 @@
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), "Satışlar");
     XLSX.writeFile(wb, "satislar_shablon.xlsx");
+  }
+
+  function parseDateCell(raw, fallback) {
+    if (!raw) return fallback;
+    if (raw instanceof Date) return raw.toISOString().slice(0, 10);
+    const s = String(raw).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const m = s.match(/^(\d{1,2})[.\/](\d{1,2})[.\/](\d{4})$/);
+    if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+    return fallback;
+  }
+  function parseTimeCell(raw) {
+    if (!raw) return "";
+    if (raw instanceof Date) return String(raw.getHours()).padStart(2, "0") + ":" + String(raw.getMinutes()).padStart(2, "0");
+    return String(raw).trim();
+  }
+
+  // ---------- Master daily bulk import (one Excel file, many sheets) ----------
+  const MASTER_SHEET_DEFS = [
+    { key: "alislar", sheetName: "Alışlar", headers: ["Tarix", "Vaxt", "Kim", "Kq", "Növ", "Məbləğ", "Qeyd"], example: ["", "10:00", "Nümunə Ad", 50, "Pasos", 175, ""] },
+    { key: "satislar", sheetName: "Satışlar", headers: ["Tarix", "Vaxt", "Kim", "Kq", "Növ", "Məbləğ", "Qeyd"], example: ["", "16:00", "Nümunə Ad", 20, "Pasos", 70, ""] },
+    { key: "xercler", sheetName: "Xərclər", headers: ["Tarix", "Maddə", "Məbləğ", "Qeyd"], example: ["", "Nəqliyyat", 30, ""] },
+    { key: "borclar", sheetName: "Borclar", headers: ["Tarix", "Ad", "Məbləğ", "İstiqamət", "Qeyd"], example: ["", "Nümunə Ad", 100, "Verdim", ""] },
+    { key: "davamiyyet", sheetName: "Davamiyyət", headers: ["Tarix", "Ad"], example: ["", "Nümunə Ad"] },
+    { key: "surucu avansi", sheetName: "Sürücü avansı", headers: ["Tarix", "Sürücü", "Məbləğ", "Qeyd"], example: ["", "Nümunə Sürücü", 500, ""] },
+    { key: "surucu alislari", sheetName: "Sürücü alışları", headers: ["Tarix", "Vaxt", "Sürücü", "Kimdən", "Kq", "Kisə sayı", "Növ", "Məbləğ", "Ödənilib", "Qeyd"], example: ["", "11:00", "Nümunə Sürücü", "Satıcı adı", 30, 1, "Pasos", 105, "Xeyr", ""] },
+    { key: "yanacaq", sheetName: "Yanacaq", headers: ["Tarix", "Vaxt", "Traktorist", "Litr", "Növ", "Qeyd"], example: ["", "08:00", "Nümunə Traktorist", 20, "Dizel", ""] },
+  ];
+
+  function downloadMasterTemplate() {
+    const wb = XLSX.utils.book_new();
+    MASTER_SHEET_DEFS.forEach((def) => {
+      const rows = [def.headers, def.example.map((v, i) => (i === 0 ? todayISO() : v))];
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      XLSX.utils.book_append_sheet(wb, ws, def.sheetName);
+    });
+    XLSX.writeFile(wb, `gundelik_sablon_${todayISO()}.xlsx`);
+  }
+
+  function buildColIndex(headerRow, headerMap) {
+    const idx = {};
+    headerRow.map(normalizeHeader).forEach((h, i) => {
+      const key = headerMap[h];
+      if (key && !(key in idx)) idx[key] = i;
+    });
+    return idx;
+  }
+
+  const MASTER_HEADER_MAPS = {
+    alislar: { tarix: "date", vaxt: "time", kim: "who", kq: "kg", kg: "kg", nov: "type", tip: "type", mebleg: "sum", sum: "sum", qeyd: "note" },
+    satislar: { tarix: "date", vaxt: "time", kim: "who", kq: "kg", kg: "kg", nov: "type", tip: "type", mebleg: "sum", sum: "sum", qeyd: "note" },
+    xercler: { tarix: "date", madde: "category", mebleg: "sum", sum: "sum", qeyd: "note" },
+    borclar: { tarix: "date", ad: "person", mebleg: "sum", sum: "sum", istiqamet: "direction", qeyd: "note" },
+    davamiyyet: { tarix: "date", ad: "person" },
+    "surucu avansi": { tarix: "date", surucu: "driver", mebleg: "sum", sum: "sum", qeyd: "note" },
+    "surucu alislari": { tarix: "date", vaxt: "time", surucu: "driver", kimden: "seller", kq: "kg", kg: "kg", "kise sayi": "bags", nov: "type", tip: "type", mebleg: "sum", sum: "sum", odenilib: "paid", qeyd: "note" },
+    yanacaq: { tarix: "date", vaxt: "time", traktorist: "tractorist", litr: "liters", nov: "type", tip: "type", qeyd: "note" },
+  };
+
+  function parseMasterRow(key, row, idx) {
+    const get = (field) => (idx[field] !== undefined ? row[idx[field]] : "");
+    const dateRaw = idx.date !== undefined ? row[idx.date] : null;
+    if (key === "alislar" || key === "satislar") {
+      const kg = Number(get("kg"));
+      const sum = Number(get("sum"));
+      if (!kg || !sum) return null;
+      let type = String(get("type") || "").trim();
+      if (!NUT_TYPES.includes(type)) type = NUT_TYPES[0];
+      const who = String(get("who") || "").trim() || "Adsız";
+      const base = { date: parseDateCell(dateRaw, todayISO()), time: parseTimeCell(idx.time !== undefined ? row[idx.time] : null), kg, type, sum, note: String(get("note") || "").trim() };
+      return key === "alislar" ? { ...base, supplier: who, price: Number((sum / kg).toFixed(2)) } : { ...base, buyer: who };
+    }
+    if (key === "xercler") {
+      const category = String(get("category") || "").trim();
+      const sum = Number(get("sum"));
+      if (!category || !sum) return null;
+      return { date: parseDateCell(dateRaw, todayISO()), category, sum, note: String(get("note") || "").trim() };
+    }
+    if (key === "borclar") {
+      const person = String(get("person") || "").trim();
+      const sum = Number(get("sum"));
+      if (!person || !sum) return null;
+      const dirNorm = normalizeHeader(get("direction"));
+      const direction = dirNorm.startsWith("ald") ? "took" : "gave";
+      return { date: parseDateCell(dateRaw, todayISO()), person, sum, direction, note: String(get("note") || "").trim() };
+    }
+    if (key === "davamiyyet") {
+      const person = String(get("person") || "").trim();
+      if (!person) return null;
+      return { date: parseDateCell(dateRaw, todayISO()), person };
+    }
+    if (key === "surucu avansi") {
+      const driver = String(get("driver") || "").trim();
+      const sum = Number(get("sum"));
+      if (!driver || !sum) return null;
+      return { date: parseDateCell(dateRaw, todayISO()), driver, sum, note: String(get("note") || "").trim() };
+    }
+    if (key === "surucu alislari") {
+      const driver = String(get("driver") || "").trim();
+      const kg = Number(get("kg"));
+      const sum = Number(get("sum"));
+      if (!driver || !kg || !sum) return null;
+      let type = String(get("type") || "").trim();
+      if (!NUT_TYPES.includes(type)) type = NUT_TYPES[0];
+      const paidNorm = normalizeHeader(get("paid"));
+      const paid = paidNorm.startsWith("bel");
+      return {
+        date: parseDateCell(dateRaw, todayISO()), time: parseTimeCell(idx.time !== undefined ? row[idx.time] : null),
+        driver, seller: String(get("seller") || "").trim(), kg, bags: Number(get("bags")) || 0, type, sum, paid,
+        note: String(get("note") || "").trim(),
+      };
+    }
+    if (key === "yanacaq") {
+      const tractorist = String(get("tractorist") || "").trim();
+      const liters = Number(get("liters"));
+      if (!tractorist || !liters) return null;
+      let type = String(get("type") || "").trim();
+      if (!FUEL_TYPES.includes(type)) type = FUEL_TYPES[0];
+      return {
+        date: parseDateCell(dateRaw, todayISO()), time: parseTimeCell(idx.time !== undefined ? row[idx.time] : null),
+        tractorist, liters, type, note: String(get("note") || "").trim(),
+      };
+    }
+    return null;
+  }
+
+  const MASTER_SHEET_LABELS = { alislar: "Alışlar", satislar: "Satışlar", xercler: "Xərclər", borclar: "Borclar", davamiyyet: "Davamiyyət", "surucu avansi": "Sürücü avansı", "surucu alislari": "Sürücü alışları", yanacaq: "Yanacaq" };
+
+  async function handleMasterImportFile(file) {
+    try {
+      const data = await file.arrayBuffer();
+      const wb = XLSX.read(data, { type: "array", cellDates: true });
+      const result = {};
+      MASTER_SHEET_DEFS.forEach((def) => {
+        const sheetName = wb.SheetNames.find((n) => normalizeHeader(n) === def.key);
+        if (!sheetName) return;
+        const sheet = wb.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
+        if (!rows.length) return;
+        const idx = buildColIndex(rows[0], MASTER_HEADER_MAPS[def.key]);
+        const parsed = [];
+        let skipped = 0;
+        for (let r = 1; r < rows.length; r++) {
+          const row = rows[r];
+          if (!row || row.every((c) => c === "" || c == null)) continue;
+          const rec = parseMasterRow(def.key, row, idx);
+          if (rec) parsed.push(rec); else skipped++;
+        }
+        if (parsed.length || skipped) result[def.key] = { rows: parsed, skipped };
+      });
+      if (Object.keys(result).length === 0) {
+        alert("Faylda tanınan heç bir vərəq tapılmadı. Şablonu yoxlayın.");
+        return;
+      }
+      state.masterImportPending = result;
+      state.masterImportFileName = file.name;
+      renderTabContent();
+    } catch (e) {
+      alert("Fayl oxuna bilmədi: " + e.message);
+    }
+  }
+
+  async function commitMasterImport() {
+    const data = state.masterImportPending;
+    if (!data) return;
+    const btn = document.getElementById("masterImportConfirm");
+    const setProgress = (msg) => { if (btn) btn.textContent = msg; };
+
+    if (data["alislar"]) {
+      const rows = data["alislar"].rows;
+      for (let i = 0; i < rows.length; i++) { setProgress(`Alışlar (${i + 1}/${rows.length})`); await addPurchase(rows[i]); }
+    }
+    if (data["satislar"]) {
+      const rows = data["satislar"].rows;
+      for (let i = 0; i < rows.length; i++) { setProgress(`Satışlar (${i + 1}/${rows.length})`); await addSale(rows[i]); }
+    }
+    if (data["xercler"]) {
+      const rows = data["xercler"].rows;
+      for (let i = 0; i < rows.length; i++) { setProgress(`Xərclər (${i + 1}/${rows.length})`); await addExpense(rows[i]); }
+    }
+    if (data["borclar"]) {
+      const rows = data["borclar"].rows;
+      for (let i = 0; i < rows.length; i++) { setProgress(`Borclar (${i + 1}/${rows.length})`); await addDebt(rows[i]); }
+    }
+    if (data["davamiyyet"]) {
+      const rows = data["davamiyyet"].rows;
+      for (let i = 0; i < rows.length; i++) {
+        setProgress(`Davamiyyət (${i + 1}/${rows.length})`);
+        const r = rows[i];
+        await addWorker(r.person);
+        const exists = state.attendance.some((a) => a.date === r.date && a.person === r.person);
+        if (!exists) await addAttendance({ date: r.date, person: r.person });
+      }
+    }
+    if (data["surucu avansi"]) {
+      const rows = data["surucu avansi"].rows;
+      for (let i = 0; i < rows.length; i++) {
+        setProgress(`Sürücü avansı (${i + 1}/${rows.length})`);
+        const r = rows[i];
+        await addDriver(r.driver);
+        await addDriverAdvance(r);
+      }
+    }
+    if (data["surucu alislari"]) {
+      const rows = data["surucu alislari"].rows;
+      for (let i = 0; i < rows.length; i++) {
+        setProgress(`Sürücü alışları (${i + 1}/${rows.length})`);
+        const r = rows[i];
+        await addDriver(r.driver);
+        await addDriverPurchase(r);
+      }
+    }
+    if (data["yanacaq"]) {
+      const rows = data["yanacaq"].rows;
+      for (let i = 0; i < rows.length; i++) {
+        setProgress(`Yanacaq (${i + 1}/${rows.length})`);
+        const r = rows[i];
+        await addTractorist(r.tractorist);
+        await addFuelLog(r);
+      }
+    }
+
+    const total = Object.values(data).reduce((s, d) => s + d.rows.length, 0);
+    state.masterImportPending = null;
+    state.masterImportFileName = "";
+    alert(`Toplu idxal tamamlandı: ${total} qeyd əlavə olundu`);
+    renderTabContent();
   }
 
   async function handleSalesFile(file) {
@@ -482,8 +721,9 @@
   }
 
   async function addExpense(e) {
-    const cashRef = await logCash(todayISO(), "out", e.sum, e.category);
-    const entry = { date: todayISO(), ...e, cashLogId: cashRef ? cashRef.id : null };
+    const date = e.date || todayISO();
+    const cashRef = await logCash(date, "out", e.sum, e.category);
+    const entry = { ...e, date, cashLogId: cashRef ? cashRef.id : null };
     await addDoc("expenses", entry);
   }
   async function deleteExpense(id) {
@@ -493,13 +733,14 @@
   }
 
   async function addDebt(d) {
+    const date = d.date || todayISO();
     let cashRef;
     if (d.direction === "gave") {
-      cashRef = await logCash(todayISO(), "out", d.sum, "Borc: " + d.person);
+      cashRef = await logCash(date, "out", d.sum, "Borc: " + d.person);
     } else {
-      cashRef = await logCash(todayISO(), "in", d.sum, "Borc alındı: " + d.person);
+      cashRef = await logCash(date, "in", d.sum, "Borc alındı: " + d.person);
     }
-    const entry = { date: todayISO(), paid: false, ...d, cashLogId: cashRef ? cashRef.id : null };
+    const entry = { paid: false, ...d, date, cashLogId: cashRef ? cashRef.id : null };
     await addDoc("debts", entry);
   }
   async function toggleDebtPaid(id) {
@@ -568,6 +809,21 @@
     await deleteDoc("truckLoads", id);
   }
 
+  // ---------- Fuel (Yanacaq / Traktoristlər) ----------
+  async function addTractorist(name) {
+    if (state.tractorists.some((t) => t.name.toLowerCase() === name.toLowerCase())) return;
+    await addDoc("tractorists", { name });
+  }
+  async function removeTractorist(id) {
+    await deleteDoc("tractorists", id);
+  }
+  async function addFuelLog(f) {
+    await addDoc("fuelLog", { date: todayISO(), time: nowTime(), ...f });
+  }
+  async function deleteFuelLog(id) {
+    await deleteDoc("fuelLog", id);
+  }
+
   // ---------- Drivers (Sürücülər) ----------
   async function addDriver(name) {
     if (state.drivers.some((d) => d.name.toLowerCase() === name.toLowerCase())) return;
@@ -578,8 +834,9 @@
   }
 
   async function addDriverAdvance(a) {
-    const cashRef = await logCash(todayISO(), "out", a.sum, "Sürücüyə avans: " + a.driver);
-    await addDoc("driverAdvances", { date: todayISO(), driver: a.driver, sum: a.sum, note: a.note || "", cashLogId: cashRef ? cashRef.id : null });
+    const date = a.date || todayISO();
+    const cashRef = await logCash(date, "out", a.sum, "Sürücüyə avans: " + a.driver);
+    await addDoc("driverAdvances", { date, driver: a.driver, sum: a.sum, note: a.note || "", cashLogId: cashRef ? cashRef.id : null });
   }
   async function deleteDriverAdvance(id) {
     const a = state.driverAdvances.find((x) => x.id === id);
@@ -1080,6 +1337,7 @@
   }
 
   // ---------- Truck ----------
+  let fuelType = FUEL_TYPES[0];
   function renderTruckTab() {
     const dayPurchases = state.purchases.filter((p) => p.date === state.truckDate);
     const purchasedBySupplier = {};
@@ -1140,6 +1398,16 @@
       </div>`;
     }).join("");
 
+    const dayFuel = state.fuelLog.filter((f) => f.date === state.truckDate);
+    const dayFuelByTractorist = {};
+    dayFuel.forEach((f) => { dayFuelByTractorist[f.tractorist] = (dayFuelByTractorist[f.tractorist] || 0) + f.liters; });
+
+    const monthFuel = state.fuelLog.filter((f) => f.date.startsWith(state.fuelMonth));
+    const monthFuelByTractorist = {};
+    state.tractorists.forEach((t) => { monthFuelByTractorist[t.name] = monthFuel.filter((f) => f.tractorist === t.name).reduce((s, f) => s + f.liters, 0); });
+
+    const tractoristOptions = state.tractorists.map((t) => `<option value="${esc(t.name)}"></option>`).join("");
+
     return `
       <div class="section"><div class="section-title">Tarix</div>
         <div class="field-row"><div class="field"><input id="truckDate" type="date" value="${esc(state.truckDate)}" /></div></div>
@@ -1156,6 +1424,69 @@
       <div class="section">
         <div class="section-title">${esc(state.truckDate)} tarixində göndərilən maşınlar</div>
         ${dayLoads.length === 0 ? '<div class="empty">Hələ maşın qeyd olunmayıb</div>' : loadsHtml}
+      </div>
+
+      <div class="section">
+        <div class="section-title">Traktoristlər</div>
+        <div class="field-row"><div class="field"><input id="tractoristNameInput" placeholder="Ad" /></div></div>
+        <div style="margin-bottom:10px;"><button class="btn-outline" id="addTractoristBtn">${ICONS.plus} Traktorist əlavə et</button></div>
+        <div>
+          ${
+            state.tractorists.length === 0
+              ? '<div class="empty">Hələ traktorist əlavə edilməyib</div>'
+              : state.tractorists.map((t) => `
+                <span class="chip" style="cursor:default;">${esc(t.name)}
+                  <button data-del-tractorist="${t.id}" style="background:none;border:none;color:var(--red);opacity:0.6;cursor:pointer;margin-left:4px;">✕</button>
+                </span>`).join("")
+          }
+        </div>
+      </div>
+
+      <datalist id="tractoristNamesList">${tractoristOptions}</datalist>
+
+      <div class="section">
+        <div class="section-title">Yanacaq qeydi (${esc(state.truckDate)})</div>
+        <div class="field-row"><div class="field"><label>Traktorist</label><input id="fuelTractorist" list="tractoristNamesList" placeholder="Ad" /></div></div>
+        <div class="toggle-row">
+          ${FUEL_TYPES.map((t) => `<button class="toggle-btn ${fuelType === t ? "active-ink" : ""}" data-fuel-type="${esc(t)}">${esc(t)}</button>`).join("")}
+        </div>
+        <div class="field-row"><div class="field"><label>Litr</label><input id="fuelLiters" type="number" inputmode="decimal" placeholder="0" /></div></div>
+        <div class="field-row"><div class="field"><label>Qeyd</label><input id="fuelNote" placeholder="məcburi deyil" /></div></div>
+        <button class="btn red" id="fuelSubmit">${ICONS.plus} Yanacağı qeyd et</button>
+      </div>
+
+      <div class="section">
+        <div class="section-title">${esc(state.truckDate)} — bugünkü yanacaq</div>
+        ${
+          Object.keys(dayFuelByTractorist).length === 0
+            ? '<div class="empty">Bu gün yanacaq qeydi yoxdur</div>'
+            : Object.entries(dayFuelByTractorist).map(([name, litr]) => `
+              <div class="list-row"><div class="title">${esc(name)}</div><div class="right red">${fmt(litr)} litr</div></div>
+            `).join("")
+        }
+        <div class="history-scroll" style="margin-top:8px;">
+          ${
+            dayFuel.length === 0
+              ? ""
+              : [...dayFuel].reverse().map((f) => `
+                <div class="list-row">
+                  <div><div class="title">${esc(f.tractorist)} — ${fmt(f.liters)} litr (${esc(f.type || "")})</div><div class="meta">${esc(f.date)}${f.time ? " · " + esc(f.time) : ""}${f.note ? " · " + esc(f.note) : ""}</div></div>
+                  <button class="del-btn" data-del-fuel="${f.id}">${ICONS.trash}</button>
+                </div>`).join("")
+          }
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Aylıq yanacaq hesabı</div>
+        <div class="field-row"><div class="field"><input id="fuelMonth" type="month" value="${esc(state.fuelMonth)}" /></div></div>
+        ${
+          state.tractorists.length === 0
+            ? '<div class="empty">Əvvəlcə traktorist əlavə edin</div>'
+            : state.tractorists.map((t) => `
+              <div class="list-row"><div class="title">${esc(t.name)}</div><div class="right">${fmt(monthFuelByTractorist[t.name] || 0)} litr</div></div>
+            `).join("")
+        }
       </div>
     `;
   }
@@ -1310,22 +1641,40 @@
     const driverAdvancesDay = state.driverAdvances.filter((a) => a.date === reportDate);
     const driverPurchasesDay = state.driverPurchases.filter((p) => p.date === reportDate);
     const driverSummaries = buildDriverSummaries(reportDate);
+    const fuelDay = state.fuelLog.filter((f) => f.date === reportDate);
+    const fuelByTractorist = {};
+    fuelDay.forEach((f) => { fuelByTractorist[f.tractorist] = (fuelByTractorist[f.tractorist] || 0) + f.liters; });
+    const fuelTotalLiters = fuelDay.reduce((s, f) => s + f.liters, 0);
 
-    return { purchases, sales, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalPurchaseSum, totalSalesKg, totalSalesSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags, driverAdvancesDay, driverPurchasesDay, driverSummaries };
+    return { purchases, sales, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalPurchaseSum, totalSalesKg, totalSalesSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags, driverAdvancesDay, driverPurchasesDay, driverSummaries, fuelDay, fuelByTractorist, fuelTotalLiters };
   }
 
   function buildReportText(reportDate) {
     const r = buildReportData(reportDate);
+
+    const purchaseTypeGroups = {};
+    r.purchases.forEach((p) => {
+      const t = p.type || "Digər";
+      if (!purchaseTypeGroups[t]) purchaseTypeGroups[t] = { kg: 0, sum: 0 };
+      purchaseTypeGroups[t].kg += p.kg;
+      purchaseTypeGroups[t].sum += p.sum;
+    });
+    const purchaseTypeLines = Object.keys(purchaseTypeGroups).map((t) => {
+      const g = purchaseTypeGroups[t];
+      const avg = g.kg ? g.sum / g.kg : 0;
+      return `• ${t}: ${fmt(g.kg)} kq — ${fmt(g.sum)} manat (orta ${fmt(avg)}/kq)`;
+    });
+    const purchaseAvg = r.totalKg ? r.totalPurchaseSum / r.totalKg : 0;
+
     return `📋 ${reportDate} hesabatı
 
-👷 Davamiyyət: ${r.attendanceDay.length ? r.attendanceDay.map((a) => a.person).join(", ") : "qeyd yoxdur"} (${r.attendanceDay.length} nəfər)
+👷 Davamiyyət: ${r.attendanceDay.length} nəfər işdə olub
 
-🌰 Qoz-fındıq alışı:
-${r.purchases.length ? r.purchases.map((p) => `• ${p.supplier}: ${fmt(p.kg)} kq = ${fmt(p.sum)} [${p.type || ""}]${p.time ? " · " + p.time : ""}`).join("\n") : "qeyd yoxdur"}
-Cəmi: ${fmt(r.totalKg)} kq, məbləğ ${fmt(r.totalPurchaseSum)}
+🌰 Fındıq alışı:
+${purchaseTypeLines.length ? purchaseTypeLines.join("\n") : "qeyd yoxdur"}
+Cəmi: ${fmt(r.totalKg)} kq, məbləğ ${fmt(r.totalPurchaseSum)}${r.totalKg ? ` (orta ${fmt(purchaseAvg)}/kq)` : ""}
 
 🛒 Satışlar:
-${r.sales.length ? r.sales.map((s) => `• ${s.buyer}: ${fmt(s.kg)} kq = ${fmt(s.sum)} [${s.type || ""}]${s.time ? " · " + s.time : ""}`).join("\n") : "qeyd yoxdur"}
 Cəmi: ${fmt(r.totalSalesKg)} kq, məbləğ ${fmt(r.totalSalesSum)}
 
 🚗 Sürücülər:
@@ -1345,7 +1694,11 @@ ${r.debts.length ? r.debts.map((d) => `• ${d.person}: ${fmt(d.sum)} — ${d.di
 
 🚚 Maşın:
 ${r.truckDay.length ? r.truckDay.map((t) => `• Sürücü: ${t.driver} — ${fmt(t.entries.reduce((s, e) => s + e.kg, 0))} kq, ${fmt(t.entries.reduce((s, e) => s + e.bags, 0))} kisə`).join("\n") : "göndərilməyib"}
-${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.truckTotalBags)} kisə` : ""}`;
+${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.truckTotalBags)} kisə` : ""}
+
+⛽ Yanacaq:
+${Object.keys(r.fuelByTractorist).length ? Object.entries(r.fuelByTractorist).map(([n, l]) => `• ${n}: ${fmt(l)} litr`).join("\n") : "qeyd yoxdur"}
+${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
   }
 
   function renderReportTab() {
@@ -1363,7 +1716,23 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
           ? `<div style="margin-top:18px;margin-bottom:6px;font-size:13px;font-weight:600;color:var(--ink-soft);">Excel (.xlsx) olaraq yüklə</div>
              <div class="field-row" style="margin-bottom:10px;"><button class="btn" id="reportExcelDay">${ICONS.download} Günün hesabatı</button></div>
              <div class="field-row" style="margin-bottom:10px;"><button class="btn-outline" id="reportExcelAll">${ICONS.download} Bütün tarixçəni yüklə</button></div>
-             <div><button class="btn-outline" id="reportExcelPrint">${ICONS.download} Çap üçün (bir səhifə)</button></div>`
+             <div><button class="btn-outline" id="reportExcelPrint">${ICONS.download} Çap üçün (bir səhifə)</button></div>
+
+             <div class="section" style="margin-top:22px;">
+               <div class="section-title">Gündəlik toplu idxal (bir Excel faylı ilə)</div>
+               <div style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">Şablonu yüklə, bütün günü orada doldur (Alışlar, Satışlar, Xərclər, Borclar, Davamiyyət, Sürücülər, Yanacaq — hər biri ayrı vərəqdə), sonra faylı geri yüklə.</div>
+               <div style="margin-bottom:10px;"><button class="btn-outline" id="masterTemplateBtn">${ICONS.download} Şablonu yüklə</button></div>
+               <div class="field-row"><div class="field"><label>Doldurulmuş faylı seç (.xlsx)</label><input id="masterImportFile" type="file" accept=".xlsx,.xls" /></div></div>
+               ${
+                 state.masterImportPending
+                   ? `<div style="font-size:13px;color:var(--ink);margin:10px 0;">
+                       ${esc(state.masterImportFileName)}:<br/>
+                       ${Object.keys(state.masterImportPending).map((k) => `• ${esc(MASTER_SHEET_LABELS[k])}: <b>${state.masterImportPending[k].rows.length}</b> qeyd${state.masterImportPending[k].skipped ? ` (${state.masterImportPending[k].skipped} buraxıldı)` : ""}`).join("<br/>")}
+                     </div>
+                     <button class="btn green" id="masterImportConfirm">${ICONS.plus} Hamısını təsdiqlə və yüklə</button>`
+                   : ""
+               }
+             </div>`
           : ""
       }
     `;
@@ -1422,6 +1791,12 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
         rows.push([t.driver, e.supplier, e.kg, e.bags, purchasedKg || "", purchasedKg ? Number((e.kg - purchasedKg).toFixed(2)) : ""]);
       });
     });
+    rows.push([]);
+
+    rows.push(["Yanacaq"]);
+    rows.push(["Traktorist", "Litr"]);
+    Object.entries(r.fuelByTractorist).forEach(([n, l]) => rows.push([n, l]));
+    rows.push(["CƏMİ", r.fuelTotalLiters]);
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
     ws["!cols"] = [{ wch: 22 }, { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 22 }];
@@ -1474,6 +1849,10 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
     const driverSummaryRows = r.driverSummaries.map((d) => ({ Sürücü: d.driver, Avans: d.advance, "Aldığı (kq)": d.kg, "Kisə sayı": d.bags, "Xərclədiyi məbləğ": d.spent, Qalıq: d.remaining, Vəziyyət: d.settled ? "Bağlıdır" : (d.remaining > 0 ? "Bizə qaytarmalıdır" : d.remaining < 0 ? "Biz ona borcluyuq" : "Sıfırdır") }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(driverSummaryRows.length ? driverSummaryRows : [{ Sürücü: "qeyd yoxdur" }]), "Sürücü hesabı");
 
+    const fuelRows = r.fuelDay.map((f) => ({ Tarix: f.date, Vaxt: f.time || "", Traktorist: f.tractorist, Litr: f.liters, Növ: f.type || "", Qeyd: f.note || "" }));
+    if (fuelRows.length) fuelRows.push({ Tarix: "", Vaxt: "", Traktorist: "CƏMİ", Litr: r.fuelTotalLiters, Növ: "", Qeyd: "" });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(fuelRows.length ? fuelRows : [{ Tarix: reportDate, Traktorist: "qeyd yoxdur" }]), "Yanacaq");
+
     const wsSummary = XLSX.utils.json_to_sheet([
       { Göstərici: "Tarix", Dəyər: reportDate },
       { Göstərici: "İşdə olanlar", Dəyər: r.attendanceDay.length },
@@ -1511,6 +1890,7 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(truckRowsAll.length ? truckRowsAll : [{ Tarix: "", Sürücü: "qeyd yoxdur" }]), "Maşın");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.driverAdvances.map((a) => ({ Tarix: a.date, Sürücü: a.driver, Məbləğ: a.sum, Qeyd: a.note || "" }))), "Sürücü avansı");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.driverPurchases.map((p) => ({ Tarix: p.date, Vaxt: p.time || "", Sürücü: p.driver, "Kimdən aldı": p.seller || "", Kq: p.kg, "Kisə sayı": p.bags || 0, Növ: p.type || "", Məbləğ: p.sum, Ödənilib: p.paid ? "Bəli" : "Xeyr", Qeyd: p.note || "" }))), "Sürücü alışları");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.fuelLog.map((f) => ({ Tarix: f.date, Vaxt: f.time || "", Traktorist: f.tractorist, Litr: f.liters, Növ: f.type || "", Qeyd: f.note || "" }))), "Yanacaq");
     XLSX.writeFile(wb, `hamisi_${todayISO()}.xlsx`);
   }
 
@@ -1704,6 +2084,33 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
     document.querySelectorAll("[data-del-truck]").forEach((btn) => {
       btn.onclick = () => deleteTruckLoad(btn.dataset.delTruck);
     });
+
+    document.getElementById("addTractoristBtn").onclick = async () => {
+      const name = document.getElementById("tractoristNameInput").value.trim();
+      if (!name) return;
+      await addTractorist(name);
+      document.getElementById("tractoristNameInput").value = "";
+    };
+    document.querySelectorAll("[data-del-tractorist]").forEach((btn) => {
+      btn.onclick = () => removeTractorist(btn.dataset.delTractorist);
+    });
+    document.querySelectorAll("[data-fuel-type]").forEach((btn) => {
+      btn.onclick = () => { fuelType = btn.dataset.fuelType; renderTabContent(); };
+    });
+    document.getElementById("fuelSubmit").onclick = async () => {
+      const tractorist = document.getElementById("fuelTractorist").value.trim();
+      const liters = Number(document.getElementById("fuelLiters").value);
+      if (!tractorist || !liters) return;
+      const note = document.getElementById("fuelNote").value;
+      await addFuelLog({ date: state.truckDate, tractorist, liters, type: fuelType, note });
+      document.getElementById("fuelTractorist").value = "";
+      document.getElementById("fuelLiters").value = "";
+      document.getElementById("fuelNote").value = "";
+    };
+    document.querySelectorAll("[data-del-fuel]").forEach((btn) => {
+      btn.onclick = () => deleteFuelLog(btn.dataset.delFuel);
+    });
+    document.getElementById("fuelMonth").onchange = (e) => { state.fuelMonth = e.target.value; renderTabContent(); };
   }
 
   function wireDrivers() {
@@ -1784,6 +2191,18 @@ ${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.tr
     if (excelAllBtn) excelAllBtn.onclick = () => downloadAllExcel();
     const excelPrintBtn = document.getElementById("reportExcelPrint");
     if (excelPrintBtn) excelPrintBtn.onclick = () => downloadPrintableExcel(state.reportDate);
+
+    const masterTemplateBtn = document.getElementById("masterTemplateBtn");
+    if (masterTemplateBtn) masterTemplateBtn.onclick = downloadMasterTemplate;
+    const masterImportFileInput = document.getElementById("masterImportFile");
+    if (masterImportFileInput) {
+      masterImportFileInput.onchange = (e) => {
+        const file = e.target.files[0];
+        if (file) handleMasterImportFile(file);
+      };
+    }
+    const masterImportConfirmBtn = document.getElementById("masterImportConfirm");
+    if (masterImportConfirmBtn) masterImportConfirmBtn.onclick = commitMasterImport;
   }
 
   // ---------- Boot ----------
