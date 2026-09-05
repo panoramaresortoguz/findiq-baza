@@ -279,6 +279,7 @@
     salesImportSkipped: 0,
     salesImportFileName: "",
     driversDate: todayISO(),
+    kassaDate: todayISO(),
     fuelMonth: todayISO().slice(0, 7),
     masterImportPending: null,
     masterImportFileName: "",
@@ -819,7 +820,8 @@
   }
 
   async function addCashLog(c) {
-    await logCash(todayISO(), c.type, c.sum, c.note, { manual: true, source: "manual" });
+    const date = c.date || todayISO();
+    await logCash(date, c.type, c.sum, c.note, { manual: true, source: "manual" });
   }
   async function deleteCashLog(id) {
     await deleteDoc("cashLog", id);
@@ -1076,13 +1078,21 @@
 
   // ---------- Kassa ----------
   function renderKassaTab() {
-    const reportableCashLog = reportableCash(state.cashLog);
-    const totalIn = reportableCashLog.filter((c) => c.type === "in").reduce((s, c) => s + c.sum, 0);
-    const totalOut = reportableCashLog.filter((c) => c.type === "out").reduce((s, c) => s + c.sum, 0);
-    const balance = cashBalance();
-    const breakdown = buildCashBreakdown(reportableCashLog);
+    const date = state.kassaDate;
+    const dayCashLog = state.cashLog.filter((c) => c.date === date);
+    // "Kassada qalıq" here resets to 0 each day and shows just that day's net movement —
+    // every real cash event that day (including driver advance/return) counts toward it.
+    const dayBalance = dayCashLog.reduce((s, c) => s + (c.type === "in" ? c.sum : -c.sum), 0);
+
+    const reportableDayLog = reportableCash(dayCashLog);
+    const totalIn = reportableDayLog.filter((c) => c.type === "in").reduce((s, c) => s + c.sum, 0);
+    const totalOut = reportableDayLog.filter((c) => c.type === "out").reduce((s, c) => s + c.sum, 0);
+    const breakdown = buildCashBreakdown(reportableDayLog);
     return `
-      <div class="stat-row"><div class="stat-card"><div class="stat-label">${ICONS.wallet}Kassada qalıq</div><div class="stat-value">${fmt(balance)}</div></div></div>
+      <div class="section"><div class="section-title">Tarix</div>
+        <div class="field-row"><div class="field"><input id="kassaDate" type="date" value="${esc(date)}" /></div></div>
+      </div>
+      <div class="stat-row"><div class="stat-card"><div class="stat-label">${ICONS.wallet}${esc(date)} — gün üzrə qalıq</div><div class="stat-value">${fmt(dayBalance)}</div></div></div>
       <div class="stat-row">
         <div class="stat-card green"><div class="stat-label">Mədaxil</div><div class="stat-value">${fmt(totalIn)}</div></div>
         <div class="stat-card red"><div class="stat-label">Kassadan çıxan</div><div class="stat-value">${fmt(totalOut)}</div></div>
@@ -1100,7 +1110,7 @@
         `).join("")}
       </div>
       <div class="section">
-        <div class="section-title">Yeni əməliyyat</div>
+        <div class="section-title">Yeni əməliyyat (${esc(date)})</div>
         <div class="toggle-row">
           <button class="toggle-btn active-green" id="kassaTypeIn" data-active="true">+ Kassaya qoyuldu</button>
           <button class="toggle-btn" id="kassaTypeOut">− Kassadan götürüldü</button>
@@ -1112,12 +1122,12 @@
         <button class="btn green" id="kassaSubmit">${ICONS.plus} Əlavə et</button>
       </div>
       <div class="section">
-        <div class="section-title">Kassa tarixçəsi</div>
+        <div class="section-title">${esc(date)} — kassa tarixçəsi</div>
         ${
-          state.cashLog.length === 0
-            ? '<div class="empty">Hələlik boşdur</div>'
+          dayCashLog.length === 0
+            ? '<div class="empty">Bu tarixdə qeyd yoxdur</div>'
             : `<div class="history-scroll">
-                ${sortByTs(state.cashLog).reverse().map((c) => `
+                ${sortByTs(dayCashLog).reverse().map((c) => `
                   <div class="list-row">
                     <div><div class="title">${esc(c.note || (c.type === "in" ? "Mədaxil" : "Çıxarış"))}</div><div class="meta">${esc(c.date)}${c.ts ? " · " + fmtTime(c.ts) : ""}</div></div>
                     <div style="display:flex;align-items:center;gap:10px;">
@@ -1729,8 +1739,9 @@
     fuelDay.forEach((f) => { fuelByTractorist[f.tractorist] = (fuelByTractorist[f.tractorist] || 0) + f.liters; });
     const fuelTotalLiters = fuelDay.reduce((s, f) => s + f.liters, 0);
     const cashBreakdown = buildCashBreakdown(reportableCashLog);
+    const dayBalance = cashLog.reduce((s, c) => s + (c.type === "in" ? c.sum : -c.sum), 0);
 
-    return { purchases, sales, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalPurchaseSum, totalSalesKg, totalSalesSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags, driverAdvancesDay, driverReturnsDay, driverSummaries, fuelDay, fuelByTractorist, fuelTotalLiters, cashBreakdown };
+    return { purchases, sales, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalPurchaseSum, totalSalesKg, totalSalesSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags, driverAdvancesDay, driverReturnsDay, driverSummaries, fuelDay, fuelByTractorist, fuelTotalLiters, cashBreakdown, dayBalance };
   }
 
   function buildReportText(reportDate) {
@@ -1767,7 +1778,7 @@ ${r.driverSummaries.length ? r.driverSummaries.map((d) => `• ${d.driver}: avan
 💵 Kassa:
 Mədaxil: +${fmt(r.cashIn)}${Object.entries(r.cashBreakdown.in).map(([src, sum]) => `\n  · ${CASH_SOURCE_LABELS[src] || src}: +${fmt(sum)}`).join("")}
 Kassadan çıxan: −${fmt(r.cashOut)}${Object.entries(r.cashBreakdown.out).map(([src, sum]) => `\n  · ${CASH_SOURCE_LABELS[src] || src}: −${fmt(sum)}`).join("")}
-Kassada qalıq (indiki): ${fmt(cashBalance())}
+Kassada qalıq (bu gün üçün): ${fmt(r.dayBalance)}
 
 🧾 Xərclər:
 ${r.expenses.length ? r.expenses.map((e) => `• ${e.category}: ${fmt(e.sum)}${e.note ? " (" + e.note + ")" : ""}`).join("\n") : "qeyd yoxdur"}
@@ -1853,7 +1864,7 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     rows.push(["Kassa"]);
     rows.push(["Mədaxil", r.cashIn]);
     rows.push(["Kassadan çıxan", r.cashOut]);
-    rows.push(["Kassada qalıq (indiki)", cashBalance()]);
+    rows.push(["Kassada qalıq (bu gün üçün)", r.dayBalance]);
     rows.push([]);
 
     rows.push(["Xərclər"]);
@@ -1945,7 +1956,7 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
       { Göstərici: "Xərclər cəmi", Dəyər: r.totalExpenses },
       { Göstərici: "Kassaya mədaxil", Dəyər: r.cashIn },
       { Göstərici: "Kassadan çıxan", Dəyər: r.cashOut },
-      { Göstərici: "Kassada qalıq (indiki)", Dəyər: cashBalance() },
+      { Göstərici: "Kassada qalıq (bu gün üçün)", Dəyər: r.dayBalance },
       { Göstərici: "Maşınla göndərilən (kq)", Dəyər: r.truckTotalKg },
       { Göstərici: "Maşınla göndərilən (kisə)", Dəyər: r.truckTotalBags },
     ]);
@@ -1989,6 +2000,7 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
   }
 
   function wireKassa() {
+    document.getElementById("kassaDate").onchange = (e) => { state.kassaDate = e.target.value; renderTabContent(); };
     const btnIn = document.getElementById("kassaTypeIn");
     const btnOut = document.getElementById("kassaTypeOut");
     function refreshToggle() {
@@ -2002,7 +2014,7 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
       const amount = Number(document.getElementById("kassaAmount").value);
       const note = document.getElementById("kassaNote").value;
       if (!amount) return;
-      await addCashLog({ type: kassaType, sum: amount, note });
+      await addCashLog({ type: kassaType, sum: amount, note, date: state.kassaDate });
     };
     document.querySelectorAll("[data-del-cash]").forEach((btn) => {
       btn.onclick = () => deleteCashLog(btn.dataset.delCash);
