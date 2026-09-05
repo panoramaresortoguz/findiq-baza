@@ -264,12 +264,11 @@
     truckLoads: [],
     drivers: [],
     driverAdvances: [],
-    driverPurchases: [],
-    driverSettlements: [],
+    driverReturns: [],
     workers: [],
     tractorists: [],
     fuelLog: [],
-    dataLoaded: { purchases: false, sales: false, expenses: false, debts: false, cashLog: false, attendance: false, truckLoads: false, drivers: false, driverAdvances: false, driverPurchases: false, driverSettlements: false, workers: false, tractorists: false, fuelLog: false },
+    dataLoaded: { purchases: false, sales: false, expenses: false, debts: false, cashLog: false, attendance: false, truckLoads: false, drivers: false, driverAdvances: false, driverReturns: false, workers: false, tractorists: false, fuelLog: false },
     // ephemeral form state per tab (kept simple, re-read from DOM on submit)
     reportDate: todayISO(),
     debtSearch: "",
@@ -368,8 +367,7 @@
     attachListener("truckLoads", "truckLoads");
     attachListener("drivers", "drivers");
     attachListener("driverAdvances", "driverAdvances");
-    attachListener("driverPurchases", "driverPurchases");
-    attachListener("driverSettlements", "driverSettlements");
+    attachListener("driverReturns", "driverReturns");
     attachListener("workers", "workers");
     attachListener("tractorists", "tractorists");
     attachListener("fuelLog", "fuelLog");
@@ -897,16 +895,15 @@
     await removeLinkedCash(a, "in", "Sürücü avansı ləğv edildi: " + (a ? a.driver : ""));
   }
 
-  async function addDriverPurchase(p) {
-    await addDoc("driverPurchases", { date: todayISO(), time: nowTime(), paid: false, ...p, ts: Date.now() });
+  async function addDriverReturn(r) {
+    const date = r.date || todayISO();
+    const cashRef = await logCash(date, "in", r.sum, "Sürücü qaytardı: " + r.driver, { source: "driver_settle" });
+    await addDoc("driverReturns", { date, time: nowTime(), kg: 0, ...r, cashLogId: cashRef ? cashRef.id : null, ts: Date.now() });
   }
-  async function toggleDriverPurchasePaid(id) {
-    const p = state.driverPurchases.find((x) => x.id === id);
-    if (!p) return;
-    await updateDoc("driverPurchases", id, { paid: !p.paid });
-  }
-  async function deleteDriverPurchase(id) {
-    await deleteDoc("driverPurchases", id);
+  async function deleteDriverReturn(id) {
+    const r = state.driverReturns.find((x) => x.id === id);
+    await deleteDoc("driverReturns", id);
+    await removeLinkedCash(r, "out", "Sürücü qaytarması ləğv edildi: " + (r ? r.driver : ""));
   }
 
   // Builds a chronological ledger for one person's debts: every entry plus the running
@@ -923,35 +920,16 @@
 
   function buildDriverSummaries(date) {
     const advances = state.driverAdvances.filter((a) => a.date === date);
-    const purchases = state.driverPurchases.filter((p) => p.date === date);
-    const settlements = state.driverSettlements.filter((s) => s.date === date);
-    const names = Array.from(new Set([...advances.map((a) => a.driver), ...purchases.map((p) => p.driver)]));
+    const returns = state.driverReturns.filter((r) => r.date === date);
+    const names = Array.from(new Set([...advances.map((a) => a.driver), ...returns.map((r) => r.driver)]));
     return names.map((driver) => {
       const advance = advances.filter((a) => a.driver === driver).reduce((s, a) => s + a.sum, 0);
-      const dp = purchases.filter((p) => p.driver === driver);
-      const kg = dp.reduce((s, p) => s + p.kg, 0);
-      const bags = dp.reduce((s, p) => s + (p.bags || 0), 0);
-      const spent = dp.reduce((s, p) => s + p.sum, 0);
-      const remaining = Number((advance - spent).toFixed(2));
-      const settlement = settlements.find((s) => s.driver === driver);
-      return { driver, advance, kg, bags, spent, remaining, settled: !!settlement, settlementId: settlement ? settlement.id : null };
+      const dr = returns.filter((r) => r.driver === driver);
+      const kg = dr.reduce((s, r) => s + (r.kg || 0), 0);
+      const returned = dr.reduce((s, r) => s + r.sum, 0);
+      const remaining = Number((advance - returned).toFixed(2));
+      return { driver, advance, kg, returned, remaining };
     });
-  }
-
-  async function settleDriver(driver, date, remaining) {
-    let cashRef = null;
-    if (remaining > 0) {
-      cashRef = await logCash(todayISO(), "in", remaining, "Sürücü qaytardı: " + driver, { source: "driver_settle" });
-    } else if (remaining < 0) {
-      cashRef = await logCash(todayISO(), "out", Math.abs(remaining), "Sürücüyə ödənildi: " + driver, { source: "driver_settle" });
-    }
-    await addDoc("driverSettlements", { date, driver, sum: Math.abs(remaining), direction: remaining >= 0 ? "return" : "reimburse", cashLogId: cashRef ? cashRef.id : null });
-  }
-  async function undoSettleDriver(id) {
-    const s = state.driverSettlements.find((x) => x.id === id);
-    if (!s) return;
-    await deleteDoc("driverSettlements", id);
-    if (s.cashLogId) await deleteDoc("cashLog", s.cashLogId);
   }
 
   // ---------- Auth ----------
@@ -1618,14 +1596,11 @@
   }
 
   // ---------- Drivers (Sürücülər) ----------
-  let driverPurchaseType = NUT_TYPES[0];
-  let driverPurchasePaid = false;
-
   function renderDriversTab() {
     const date = state.driversDate;
     const summaries = buildDriverSummaries(date);
     const advDay = state.driverAdvances.filter((a) => a.date === date);
-    const purchDay = state.driverPurchases.filter((p) => p.date === date);
+    const returnDay = state.driverReturns.filter((r) => r.date === date);
 
     const driverOptions = state.drivers.map((d) => `<option value="${esc(d.name)}"></option>`).join("");
 
@@ -1661,22 +1636,12 @@
       </div>
 
       <div class="section">
-        <div class="section-title">Sürücü alışı</div>
-        <div class="field-row"><div class="field"><label>Sürücü</label><input id="dpDriver" list="driverNamesList" placeholder="Ad" /></div></div>
-        <div class="field-row"><div class="field"><label>Kimdən aldı (məcburi deyil)</label><input id="dpSeller" placeholder="Satıcının adı" /></div></div>
-        <div class="toggle-row">
-          ${NUT_TYPES.map((t) => `<button class="toggle-btn ${driverPurchaseType === t ? "active-ink" : ""}" data-dp-type="${esc(t)}">${esc(t)}</button>`).join("")}
-        </div>
-        <div class="field-row">
-          <div class="field"><label>Kq</label><input id="dpKg" type="number" inputmode="decimal" placeholder="0" /></div>
-          <div class="field"><label>Kisə sayı</label><input id="dpBags" type="number" inputmode="decimal" placeholder="0" /></div>
-        </div>
-        <div class="field-row"><div class="field"><label>Məbləğ</label><input id="dpSum" type="number" inputmode="decimal" placeholder="0" /></div></div>
-        <div class="toggle-row">
-          <button class="toggle-btn ${driverPurchasePaid ? "active-green" : ""}" id="dpPaidBtn">${driverPurchasePaid ? "Ödənilib" : "Ödənilməyib"}</button>
-        </div>
-        <div class="field-row"><div class="field"><label>Qeyd</label><input id="dpNote" placeholder="məcburi deyil" /></div></div>
-        <button class="btn" id="dpSubmit">${ICONS.plus} Sürücü alışını qeyd et</button>
+        <div class="section-title">Sürücü qaytardı (axşam)</div>
+        <div class="field-row"><div class="field"><label>Sürücü</label><input id="retDriver" list="driverNamesList" placeholder="Ad" /></div></div>
+        <div class="field-row"><div class="field"><label>Qaytardığı məbləğ</label><input id="retSum" type="number" inputmode="decimal" placeholder="0" /></div></div>
+        <div class="field-row"><div class="field"><label>Gətirdiyi fındıq (kq, məcburi deyil)</label><input id="retKg" type="number" inputmode="decimal" placeholder="0" /></div></div>
+        <div class="field-row"><div class="field"><label>Qeyd</label><input id="retNote" placeholder="məcburi deyil" /></div></div>
+        <button class="btn green" id="retSubmit">${ICONS.plus} Qaytarmanı qeyd et</button>
       </div>
 
       <div class="section">
@@ -1689,18 +1654,10 @@
                 <div style="font-weight:700;color:var(--ink);margin-bottom:6px;">${esc(s.driver)}</div>
                 <div style="font-size:13px;color:var(--ink-soft);line-height:1.7;">
                   Avans: <b>${fmt(s.advance)}</b><br/>
-                  Aldığı: <b>${fmt(s.kg)} kq</b>${s.bags ? `, ${fmt(s.bags)} kisə` : ""}, xərclədiyi <b>${fmt(s.spent)}</b><br/>
+                  ${s.kg ? `Gətirdiyi: <b>${fmt(s.kg)} kq</b><br/>` : ""}
+                  Qaytardığı: <b>${fmt(s.returned)}</b><br/>
                   Qalıq: <b style="color:${s.remaining > 0 ? "var(--green)" : s.remaining < 0 ? "var(--red)" : "var(--ink)"};">${fmt(s.remaining)}</b>
-                  ${s.remaining > 0 ? " (bizə qaytarmalıdır)" : s.remaining < 0 ? " (biz ona borcluyuq)" : ""}
-                </div>
-                <div style="margin-top:8px;">
-                  ${
-                    s.settled
-                      ? `<button class="btn-outline" data-undo-settle="${s.settlementId}" style="width:auto;padding:6px 14px;font-size:12.5px;">Geri qaytar (hesab açıq idi)</button>`
-                      : s.remaining !== 0
-                      ? `<button class="btn ${s.remaining > 0 ? "green" : "red"}" style="width:auto;padding:8px 16px;font-size:13px;" data-settle-driver="${esc(s.driver)}" data-settle-remaining="${s.remaining}">${s.remaining > 0 ? "Qaytarıldı" : "Ödənildi"}</button>`
-                      : `<button class="btn-outline" style="width:auto;padding:6px 14px;font-size:12.5px;" data-settle-driver="${esc(s.driver)}" data-settle-remaining="0">Hesabı bağla</button>`
-                  }
+                  ${s.remaining > 0 ? " (hələ qaytarmalıdır)" : s.remaining < 0 ? " (artıq qaytarıb)" : ""}
                 </div>
               </div>
             `).join("")
@@ -1724,20 +1681,19 @@
       </div>
 
       <div class="section">
-        <div class="section-title">Sürücü alışları (${purchDay.length})</div>
+        <div class="section-title">Qaytarma tarixçəsi (${returnDay.length})</div>
         ${
-          purchDay.length === 0
+          returnDay.length === 0
             ? '<div class="empty">Hələlik boşdur</div>'
-            : sortByTs(purchDay).reverse().map((p) => `
+            : sortByTs(returnDay).reverse().map((r) => `
               <div class="list-row">
                 <div>
-                  <div class="title">${esc(p.driver)}${p.seller ? " ← " + esc(p.seller) : ""} — ${fmt(p.kg)} kq${p.bags ? " (" + p.bags + " kisə)" : ""} · ${esc(p.type || "")}</div>
-                  <div class="meta">${esc(p.date)}${p.time ? " · " + esc(p.time) : ""}${p.note ? " · " + esc(p.note) : ""}</div>
+                  <div class="title">${esc(r.driver)}${r.kg ? ` — ${fmt(r.kg)} kq gətirdi` : ""}</div>
+                  <div class="meta">${esc(r.date)}${r.time ? " · " + esc(r.time) : ""}${r.note ? " · " + esc(r.note) : ""}</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px;">
-                  <div class="right">${fmt(p.sum)}</div>
-                  <button class="btn-outline" style="width:auto;padding:4px 8px;font-size:11px;" data-toggle-dp-paid="${p.id}">${p.paid ? "Ödənilib" : "Ödənilməyib"}</button>
-                  <button class="del-btn" data-del-dp="${p.id}">${ICONS.trash}</button>
+                  <div class="right green">+${fmt(r.sum)}</div>
+                  <button class="del-btn" data-del-ret="${r.id}">${ICONS.trash}</button>
                 </div>
               </div>`).join("")
         }
@@ -1766,7 +1722,7 @@
     const truckTotalKg = truckDay.reduce((s, t) => s + t.entries.reduce((s2, e) => s2 + e.kg, 0), 0);
     const truckTotalBags = truckDay.reduce((s, t) => s + t.entries.reduce((s2, e) => s2 + e.bags, 0), 0);
     const driverAdvancesDay = state.driverAdvances.filter((a) => a.date === reportDate);
-    const driverPurchasesDay = state.driverPurchases.filter((p) => p.date === reportDate);
+    const driverReturnsDay = state.driverReturns.filter((r) => r.date === reportDate);
     const driverSummaries = buildDriverSummaries(reportDate);
     const fuelDay = state.fuelLog.filter((f) => f.date === reportDate);
     const fuelByTractorist = {};
@@ -1774,7 +1730,7 @@
     const fuelTotalLiters = fuelDay.reduce((s, f) => s + f.liters, 0);
     const cashBreakdown = buildCashBreakdown(reportableCashLog);
 
-    return { purchases, sales, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalPurchaseSum, totalSalesKg, totalSalesSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags, driverAdvancesDay, driverPurchasesDay, driverSummaries, fuelDay, fuelByTractorist, fuelTotalLiters, cashBreakdown };
+    return { purchases, sales, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalPurchaseSum, totalSalesKg, totalSalesSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags, driverAdvancesDay, driverReturnsDay, driverSummaries, fuelDay, fuelByTractorist, fuelTotalLiters, cashBreakdown };
   }
 
   function buildReportText(reportDate) {
@@ -1806,7 +1762,7 @@ Cəmi: ${fmt(r.totalKg)} kq, məbləğ ${fmt(r.totalPurchaseSum)}${r.totalKg ? `
 Cəmi: ${fmt(r.totalSalesKg)} kq, məbləğ ${fmt(r.totalSalesSum)}
 
 🚗 Sürücülər:
-${r.driverSummaries.length ? r.driverSummaries.map((d) => `• ${d.driver}: avans ${fmt(d.advance)}, aldığı ${fmt(d.kg)} kq / ${fmt(d.bags)} kisə / ${fmt(d.spent)} manat — qalıq ${fmt(d.remaining)}${d.settled ? " (bağlıdır)" : ""}`).join("\n") : "qeyd yoxdur"}
+${r.driverSummaries.length ? r.driverSummaries.map((d) => `• ${d.driver}: avans ${fmt(d.advance)}${d.kg ? `, gətirdiyi ${fmt(d.kg)} kq` : ""}, qaytardığı ${fmt(d.returned)} manat — qalıq ${fmt(d.remaining)}`).join("\n") : "qeyd yoxdur"}
 
 💵 Kassa:
 Mədaxil: +${fmt(r.cashIn)}${Object.entries(r.cashBreakdown.in).map(([src, sum]) => `\n  · ${CASH_SOURCE_LABELS[src] || src}: +${fmt(sum)}`).join("")}
@@ -1890,8 +1846,8 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     rows.push([]);
 
     rows.push(["Sürücülər"]);
-    rows.push(["Sürücü", "Avans", "Aldığı (kq)", "Kisə", "Xərclədiyi", "Qalıq", "Vəziyyət"]);
-    r.driverSummaries.forEach((d) => rows.push([d.driver, d.advance, d.kg, d.bags, d.spent, d.remaining, d.settled ? "Bağlıdır" : (d.remaining > 0 ? "Bizə qaytarmalıdır" : d.remaining < 0 ? "Biz ona borcluyuq" : "Sıfırdır")]));
+    rows.push(["Sürücü", "Avans", "Gətirdiyi (kq)", "Qaytardığı", "Qalıq"]);
+    r.driverSummaries.forEach((d) => rows.push([d.driver, d.advance, d.kg, d.returned, d.remaining]));
     rows.push([]);
 
     rows.push(["Kassa"]);
@@ -1969,10 +1925,10 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     const driverAdvRows = r.driverAdvancesDay.map((a) => ({ Tarix: a.date, Sürücü: a.driver, Məbləğ: a.sum, Qeyd: a.note || "" }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(driverAdvRows.length ? driverAdvRows : [{ Tarix: reportDate, Sürücü: "qeyd yoxdur" }]), "Sürücü avansı");
 
-    const driverPurchRows = r.driverPurchasesDay.map((p) => ({ Tarix: p.date, Vaxt: p.time || "", Sürücü: p.driver, "Kimdən aldı": p.seller || "", Kq: p.kg, "Kisə sayı": p.bags || 0, Növ: p.type || "", Məbləğ: p.sum, Ödənilib: p.paid ? "Bəli" : "Xeyr", Qeyd: p.note || "" }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(driverPurchRows.length ? driverPurchRows : [{ Tarix: reportDate, Sürücü: "qeyd yoxdur" }]), "Sürücü alışları");
+    const driverReturnRows = r.driverReturnsDay.map((rt) => ({ Tarix: rt.date, Vaxt: rt.time || "", Sürücü: rt.driver, "Gətirdiyi kq": rt.kg || "", Məbləğ: rt.sum, Qeyd: rt.note || "" }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(driverReturnRows.length ? driverReturnRows : [{ Tarix: reportDate, Sürücü: "qeyd yoxdur" }]), "Sürücü qaytarması");
 
-    const driverSummaryRows = r.driverSummaries.map((d) => ({ Sürücü: d.driver, Avans: d.advance, "Aldığı (kq)": d.kg, "Kisə sayı": d.bags, "Xərclədiyi məbləğ": d.spent, Qalıq: d.remaining, Vəziyyət: d.settled ? "Bağlıdır" : (d.remaining > 0 ? "Bizə qaytarmalıdır" : d.remaining < 0 ? "Biz ona borcluyuq" : "Sıfırdır") }));
+    const driverSummaryRows = r.driverSummaries.map((d) => ({ Sürücü: d.driver, Avans: d.advance, "Gətirdiyi (kq)": d.kg, Qaytardığı: d.returned, Qalıq: d.remaining, Vəziyyət: d.remaining > 0 ? "Hələ qaytarmalıdır" : d.remaining < 0 ? "Artıq qaytarıb" : "Bağlıdır" }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(driverSummaryRows.length ? driverSummaryRows : [{ Sürücü: "qeyd yoxdur" }]), "Sürücü hesabı");
 
     const fuelRows = r.fuelDay.map((f) => ({ Tarix: f.date, Vaxt: f.time || "", Traktorist: f.tractorist, Litr: f.liters, Növ: f.type || "", Qeyd: f.note || "" }));
@@ -2014,7 +1970,7 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(truckRowsAll.length ? truckRowsAll : [{ Tarix: "", Sürücü: "qeyd yoxdur" }]), "Maşın");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.driverAdvances.map((a) => ({ Tarix: a.date, Sürücü: a.driver, Məbləğ: a.sum, Qeyd: a.note || "" }))), "Sürücü avansı");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.driverPurchases.map((p) => ({ Tarix: p.date, Vaxt: p.time || "", Sürücü: p.driver, "Kimdən aldı": p.seller || "", Kq: p.kg, "Kisə sayı": p.bags || 0, Növ: p.type || "", Məbləğ: p.sum, Ödənilib: p.paid ? "Bəli" : "Xeyr", Qeyd: p.note || "" }))), "Sürücü alışları");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.driverReturns.map((rt) => ({ Tarix: rt.date, Vaxt: rt.time || "", Sürücü: rt.driver, "Gətirdiyi kq": rt.kg || "", Məbləğ: rt.sum, Qeyd: rt.note || "" }))), "Sürücü qaytarması");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.fuelLog.map((f) => ({ Tarix: f.date, Vaxt: f.time || "", Traktorist: f.tractorist, Litr: f.liters, Növ: f.type || "", Qeyd: f.note || "" }))), "Yanacaq");
     XLSX.writeFile(wb, `hamisi_${todayISO()}.xlsx`);
   }
@@ -2283,34 +2239,20 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
       btn.onclick = () => deleteDriverAdvance(btn.dataset.delAdv);
     });
 
-    document.querySelectorAll("[data-dp-type]").forEach((btn) => {
-      btn.onclick = () => { driverPurchaseType = btn.dataset.dpType; renderTabContent(); };
-    });
-    document.getElementById("dpPaidBtn").onclick = () => { driverPurchasePaid = !driverPurchasePaid; renderTabContent(); };
-    document.getElementById("dpSubmit").onclick = async () => {
-      const driver = document.getElementById("dpDriver").value.trim();
-      const kg = Number(document.getElementById("dpKg").value);
-      const sum = Number(document.getElementById("dpSum").value);
-      if (!driver || !kg || !sum) return;
-      const seller = document.getElementById("dpSeller").value.trim();
-      const bags = Number(document.getElementById("dpBags").value) || 0;
-      const note = document.getElementById("dpNote").value;
-      await addDriverPurchase({ driver, seller, kg, bags, type: driverPurchaseType, sum, paid: driverPurchasePaid, note });
-      driverPurchasePaid = false;
-      renderTabContent();
+    document.getElementById("retSubmit").onclick = async () => {
+      const driver = document.getElementById("retDriver").value.trim();
+      const sum = Number(document.getElementById("retSum").value);
+      if (!driver || !sum) return;
+      const kg = Number(document.getElementById("retKg").value) || 0;
+      const note = document.getElementById("retNote").value;
+      await addDriverReturn({ date: state.driversDate, driver, sum, kg, note });
+      document.getElementById("retDriver").value = "";
+      document.getElementById("retSum").value = "";
+      document.getElementById("retKg").value = "";
+      document.getElementById("retNote").value = "";
     };
-    document.querySelectorAll("[data-toggle-dp-paid]").forEach((btn) => {
-      btn.onclick = () => toggleDriverPurchasePaid(btn.dataset.toggleDpPaid);
-    });
-    document.querySelectorAll("[data-del-dp]").forEach((btn) => {
-      btn.onclick = () => deleteDriverPurchase(btn.dataset.delDp);
-    });
-
-    document.querySelectorAll("[data-settle-driver]").forEach((btn) => {
-      btn.onclick = () => settleDriver(btn.dataset.settleDriver, state.driversDate, Number(btn.dataset.settleRemaining));
-    });
-    document.querySelectorAll("[data-undo-settle]").forEach((btn) => {
-      btn.onclick = () => undoSettleDriver(btn.dataset.undoSettle);
+    document.querySelectorAll("[data-del-ret]").forEach((btn) => {
+      btn.onclick = () => deleteDriverReturn(btn.dataset.delRet);
     });
   }
 
