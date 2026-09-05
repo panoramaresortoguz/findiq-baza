@@ -1577,7 +1577,7 @@
       </div>
       <div class="section">
         <div class="section-title">Göndərilən maşın və yükü</div>
-        <div class="field-row"><div class="field"><label>Sürücü</label><input id="truckDriver" placeholder="Sürücünün adı" /></div></div>
+        <div class="field-row"><div class="field"><label>Sürücü (məcburi deyil)</label><input id="truckDriver" placeholder="Sürücünün adı" /></div></div>
         <div class="field-row"><div class="field"><label>Göndərilmə tarixi</label><input id="truckLoadDate" type="date" value="${esc(state.truckDate)}" /></div></div>
         ${entriesHtml}
         <div style="margin-bottom:10px;"><button class="btn-outline" id="truckAddRow" style="border-style:dashed;">+ Sətir əlavə et</button></div>
@@ -2236,11 +2236,14 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
       renderTabContent();
     };
     document.getElementById("truckSubmit").onclick = async () => {
-      const driver = document.getElementById("truckDriver").value.trim();
+      const driver = document.getElementById("truckDriver").value.trim() || "Naməlum";
       const note = document.getElementById("truckNote").value;
       const loadDate = document.getElementById("truckLoadDate").value || state.truckDate;
       const validEntries = state.truckEntries.filter((e) => e.supplier.trim() && e.kg);
-      if (!driver || validEntries.length === 0) return;
+      if (validEntries.length === 0) {
+        alert("Ən azı bir sətirdə \"Kim apardı\" adını və Kq-nı yazın.");
+        return;
+      }
       await addTruckLoad({
         date: loadDate,
         driver,
