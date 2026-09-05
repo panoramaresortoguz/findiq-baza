@@ -1152,6 +1152,17 @@
     const dayPurchases = state.purchases.filter((p) => p.date === date);
     const dayKg = dayPurchases.reduce((s, p) => s + p.kg, 0);
     const daySum = dayPurchases.reduce((s, p) => s + p.sum, 0);
+
+    const byType = {};
+    dayPurchases.forEach((p) => {
+      const t = p.type || "Digər";
+      if (!byType[t]) byType[t] = { kg: 0, sum: 0 };
+      byType[t].kg += p.kg;
+      byType[t].sum += p.sum;
+    });
+    const typeOrder = [...NUT_TYPES, ...Object.keys(byType).filter((t) => !NUT_TYPES.includes(t))];
+    const typeRows = typeOrder.filter((t) => byType[t]);
+
     return `
       <div class="section"><div class="section-title">Tarix</div>
         <div class="field-row"><div class="field"><input id="purchasesDate" type="date" value="${esc(date)}" /></div></div>
@@ -1159,6 +1170,38 @@
       <div class="stat-row">
         <div class="stat-card"><div class="stat-label">${ICONS.package}${esc(date)} — alınıb</div><div class="stat-value">${fmt(dayKg)} kg</div></div>
         <div class="stat-card green"><div class="stat-label">${ICONS.wallet}${esc(date)} — məbləğ</div><div class="stat-value">${fmt(daySum)}</div></div>
+      </div>
+      <div class="section">
+        <div class="section-title">Növlər üzrə (${esc(date)})</div>
+        ${
+          typeRows.length === 0
+            ? '<div class="empty">Bu tarixdə qeyd yoxdur</div>'
+            : `<div style="overflow-x:auto; border:1px solid var(--line-soft); border-radius:10px;">
+                <table style="border-collapse:collapse; width:100%; font-size:13px;">
+                  <thead>
+                    <tr>
+                      <th style="padding:8px 12px; text-align:left; border-bottom:1.5px solid var(--line); color:var(--muted); font-weight:600;">Növ</th>
+                      <th style="padding:8px 12px; text-align:right; border-bottom:1.5px solid var(--line); color:var(--muted); font-weight:600;">Kq</th>
+                      <th style="padding:8px 12px; text-align:right; border-bottom:1.5px solid var(--line); color:var(--muted); font-weight:600;">Məbləğ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${typeRows.map((t) => `
+                      <tr>
+                        <td style="padding:8px 12px; border-bottom:1px solid var(--line-soft); font-weight:600; color:var(--ink);">${esc(t)}</td>
+                        <td style="padding:8px 12px; text-align:right; border-bottom:1px solid var(--line-soft);">${fmt(byType[t].kg)}</td>
+                        <td style="padding:8px 12px; text-align:right; border-bottom:1px solid var(--line-soft);">${fmt(byType[t].sum)}</td>
+                      </tr>
+                    `).join("")}
+                    <tr>
+                      <td style="padding:8px 12px; font-weight:700; color:var(--ink);">CƏMİ</td>
+                      <td style="padding:8px 12px; text-align:right; font-weight:700; color:var(--ink);">${fmt(dayKg)}</td>
+                      <td style="padding:8px 12px; text-align:right; font-weight:700; color:var(--ink);">${fmt(daySum)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>`
+        }
       </div>
       <div class="section">
         <div class="section-title">Yeni alış</div>
