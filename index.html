@@ -1533,6 +1533,44 @@
 
     const tractoristOptions = state.tractorists.map((t) => `<option value="${esc(t.name)}"></option>`).join("");
 
+    const dayLoads2 = dayLoads;
+    const byCarrier = {};
+    dayLoads2.forEach((t) => {
+      t.entries.forEach((e) => {
+        if (!byCarrier[e.supplier]) byCarrier[e.supplier] = { kg: 0, bags: 0 };
+        byCarrier[e.supplier].kg += e.kg;
+        byCarrier[e.supplier].bags += e.bags;
+      });
+    });
+    const carrierRows = Object.entries(byCarrier);
+    const carrierTableHtml = carrierRows.length
+      ? `<div style="overflow-x:auto; border:1px solid var(--line-soft); border-radius:10px;">
+          <table style="border-collapse:collapse; width:100%; font-size:13px;">
+            <thead>
+              <tr>
+                <th style="padding:8px 12px; text-align:left; border-bottom:1.5px solid var(--line); color:var(--muted); font-weight:600;">Kim apardı</th>
+                <th style="padding:8px 12px; text-align:right; border-bottom:1.5px solid var(--line); color:var(--muted); font-weight:600;">Kq</th>
+                <th style="padding:8px 12px; text-align:right; border-bottom:1.5px solid var(--line); color:var(--muted); font-weight:600;">Kisə</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${carrierRows.map(([name, v]) => `
+                <tr>
+                  <td style="padding:8px 12px; border-bottom:1px solid var(--line-soft); font-weight:600; color:var(--ink);">${esc(name)}</td>
+                  <td style="padding:8px 12px; text-align:right; border-bottom:1px solid var(--line-soft);">${fmt(v.kg)}</td>
+                  <td style="padding:8px 12px; text-align:right; border-bottom:1px solid var(--line-soft);">${fmt(v.bags)}</td>
+                </tr>
+              `).join("")}
+              <tr>
+                <td style="padding:8px 12px; font-weight:700; color:var(--ink);">CƏMİ</td>
+                <td style="padding:8px 12px; text-align:right; font-weight:700; color:var(--ink);">${fmt(carrierRows.reduce((s, [, v]) => s + v.kg, 0))}</td>
+                <td style="padding:8px 12px; text-align:right; font-weight:700; color:var(--ink);">${fmt(carrierRows.reduce((s, [, v]) => s + v.bags, 0))}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>`
+      : '<div class="empty">Hələ məlumat yoxdur</div>';
+
     return `
       <div class="section"><div class="section-title">Tarix (siyahı üçün)</div>
         <div class="field-row"><div class="field"><input id="truckDate" type="date" value="${esc(state.truckDate)}" /></div></div>
@@ -1549,7 +1587,11 @@
         <div class="time-note">Əvvəlki günlərdə göndərilmiş maşını əlavə etmək üçün "Göndərilmə tarixi"ni dəyişin.</div>
       </div>
       <div class="section">
-        <div class="section-title">${esc(state.truckDate)} tarixində göndərilən maşınlar</div>
+        <div class="section-title">${esc(state.truckDate)} — kim, nə qədər apardı</div>
+        ${carrierTableHtml}
+      </div>
+      <div class="section">
+        <div class="section-title">${esc(state.truckDate)} tarixində göndərilən maşınlar (təfərrüat)</div>
         ${dayLoads.length === 0 ? '<div class="empty">Hələ maşın qeyd olunmayıb</div>' : loadsHtml}
       </div>
 
@@ -2320,6 +2362,18 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
   }
 
   // ---------- Boot ----------
+  // Prevent the browser's default behaviour of nudging a focused number input up/down
+  // when the mouse wheel scrolls over it — this was silently corrupting typed amounts
+  // (e.g. typing 135 while the page scrolls a notch could leave 133 or 134 instead).
+  document.addEventListener(
+    "wheel",
+    () => {
+      const el = document.activeElement;
+      if (el && el.tagName === "INPUT" && el.type === "number") el.blur();
+    },
+    { passive: true }
+  );
+
   if (!firebaseReady) {
     document.getElementById("app").innerHTML = '<div class="loading-screen">Firebase qoşulmadı. İnternet bağlantısını yoxlayın.</div>';
   } else {
