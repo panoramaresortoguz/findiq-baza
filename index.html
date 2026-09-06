@@ -282,6 +282,7 @@
     kassaDate: todayISO(),
     purchasesDate: todayISO(),
     salesDate: todayISO(),
+    debtsDate: todayISO(),
     fuelMonth: todayISO().slice(0, 7),
     masterImportPending: null,
     masterImportFileName: "",
@@ -1356,7 +1357,8 @@
     const tookTotal = active.filter((d) => d.direction === "took").reduce((s, d) => s + d.sum, 0);
 
     const search = state.debtSearch.trim().toLowerCase();
-    const filtered = search ? state.debts.filter((d) => d.person.toLowerCase().includes(search)) : state.debts;
+    const searchMatched = search ? state.debts.filter((d) => d.person.toLowerCase().includes(search)) : state.debts;
+    const filtered = searchMatched.filter((d) => d.date === state.debtsDate);
 
     const byPerson = {};
     active.forEach((d) => {
@@ -1422,7 +1424,7 @@
         <div class="field-row"><div class="field"><label>Məbləğ</label><input id="dSum" type="number" inputmode="decimal" placeholder="0" /></div></div>
         <div class="field-row"><div class="field"><label>Qeyd</label><input id="dNote" placeholder="məcburi deyil" /></div></div>
         <button class="btn ${debtDirection === "gave" ? "green" : "red"}" id="dSubmit">${ICONS.plus} Borcu qeyd et</button>
-        <div class="time-note">Qismən qaytarma üçün: eyni adla "Borc aldım" seçib qaytarılan məbləği yaz — qalıq özü hesablanacaq.</div>
+        <div class="time-note">"Bütün borclar" bölməsində seçilmiş tarixə (${esc(state.debtsDate)}) qeyd olunacaq. Qismən qaytarma üçün: eyni adla "Borc aldım" seçib qaytarılan məbləği yaz — qalıq özü hesablanacaq.</div>
       </div>
       ${
         debtors.length
@@ -1436,7 +1438,8 @@
           : ""
       }
       <div class="section">
-        <div class="section-title">Bütün borclar (${state.debts.length})</div>
+        <div class="section-title">Bütün borclar (${filtered.length})</div>
+        <div class="field-row"><div class="field"><input id="debtsDate" type="date" value="${esc(state.debtsDate)}" /></div></div>
         ${
           filtered.length === 0
             ? '<div class="empty">Nəticə yoxdur</div>'
@@ -2201,12 +2204,13 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
       btn.onclick = () => { debtDirection = btn.dataset.debtDir; renderTabContent(); };
     });
     document.getElementById("dSearch").oninput = (e) => { state.debtSearch = e.target.value; renderTabContent(); };
+    document.getElementById("debtsDate").onchange = (e) => { state.debtsDate = e.target.value; renderTabContent(); };
     document.getElementById("dSubmit").onclick = async () => {
       const person = document.getElementById("dPerson").value.trim();
       const sum = Number(document.getElementById("dSum").value);
       if (!person || !sum) return;
       const note = document.getElementById("dNote").value;
-      await addDebt({ person, sum, direction: debtDirection, note });
+      await addDebt({ person, sum, direction: debtDirection, note, date: state.debtsDate });
     };
     document.querySelectorAll("[data-toggle-debt]").forEach((btn) => {
       btn.onclick = () => toggleDebtPaid(btn.dataset.toggleDebt);
