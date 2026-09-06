@@ -1091,6 +1091,8 @@
     const totalIn = reportableDayLog.filter((c) => c.type === "in").reduce((s, c) => s + c.sum, 0);
     const totalOut = reportableDayLog.filter((c) => c.type === "out").reduce((s, c) => s + c.sum, 0);
     const breakdown = buildCashBreakdown(reportableDayLog);
+    const dayDriverAdvance = state.driverAdvances.filter((a) => a.date === date).reduce((s, a) => s + a.sum, 0);
+    const dayDriverReturned = state.driverReturns.filter((r) => r.date === date).reduce((s, r) => s + r.sum, 0);
     return `
       <div class="section"><div class="section-title">Tarix</div>
         <div class="field-row"><div class="field"><input id="kassaDate" type="date" value="${esc(date)}" /></div></div>
@@ -1105,12 +1107,14 @@
         ${Object.entries(breakdown.in).length === 0 ? '<div class="empty">Hələlik boşdur</div>' : Object.entries(breakdown.in).map(([src, sum]) => `
           <div class="list-row"><div class="title">${esc(CASH_SOURCE_LABELS[src] || src)}</div><div class="right green">+${fmt(sum)}</div></div>
         `).join("")}
+        ${dayDriverReturned > 0 ? `<div class="list-row" style="opacity:0.75;"><div class="title">Sürücülərdən qaytarılıb</div><div class="right" style="color:var(--muted);">+${fmt(dayDriverReturned)}</div></div>` : ""}
       </div>
       <div class="section">
         <div class="section-title">Çıxan haraya</div>
         ${Object.entries(breakdown.out).length === 0 ? '<div class="empty">Hələlik boşdur</div>' : Object.entries(breakdown.out).map(([src, sum]) => `
           <div class="list-row"><div class="title">${esc(CASH_SOURCE_LABELS[src] || src)}</div><div class="right red">−${fmt(sum)}</div></div>
         `).join("")}
+        ${dayDriverAdvance > 0 ? `<div class="list-row" style="opacity:0.75;"><div class="title">Sürücülərə avans verilib</div><div class="right" style="color:var(--muted);">−${fmt(dayDriverAdvance)}</div></div>` : ""}
       </div>
       <div class="section">
         <div class="section-title">Yeni əməliyyat (${esc(date)})</div>
