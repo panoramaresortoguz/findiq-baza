@@ -1800,7 +1800,8 @@
     const byCarrier = {};
     dayIntake.forEach((g) => {
       if (!byCarrier[g.gətirən]) byCarrier[g.gətirən] = {};
-      if (!byCarrier[g.gətirən][g.type]) byCarrier[g.gətirən][g.type] = { kg: 0, kg2: 0 };
+      if (!byCarrier[g.gətirən][g.type]) byCarrier[g.gətirən][g.type] = { kgStated: 0, kg: 0, kg2: 0 };
+      byCarrier[g.gətirən][g.type].kgStated += g.kgStated || 0;
       byCarrier[g.gətirən][g.type].kg += g.kg;
       byCarrier[g.gətirən][g.type].kg2 += g.kg2 || 0;
     });
@@ -1811,7 +1812,8 @@
     const byCarrierMonth = {};
     monthIntake.forEach((g) => {
       if (!byCarrierMonth[g.gətirən]) byCarrierMonth[g.gətirən] = {};
-      if (!byCarrierMonth[g.gətirən][g.type]) byCarrierMonth[g.gətirən][g.type] = { kg: 0, kg2: 0 };
+      if (!byCarrierMonth[g.gətirən][g.type]) byCarrierMonth[g.gətirən][g.type] = { kgStated: 0, kg: 0, kg2: 0 };
+      byCarrierMonth[g.gətirən][g.type].kgStated += g.kgStated || 0;
       byCarrierMonth[g.gətirən][g.type].kg += g.kg;
       byCarrierMonth[g.gətirən][g.type].kg2 += g.kg2 || 0;
     });
@@ -1821,6 +1823,7 @@
       if (!carriers.length) return '<div class="empty">Hələ məlumat yoxdur</div>';
       return carriers.map((carrier) => {
         const types = byCarrierData[carrier];
+        const totalKgStated = Object.values(types).reduce((s, v) => s + v.kgStated, 0);
         const totalKg = Object.values(types).reduce((s, v) => s + v.kg, 0);
         const totalKg2 = Object.values(types).reduce((s, v) => s + v.kg2, 0);
         return `<div class="card-box">
@@ -1829,12 +1832,12 @@
             <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-top:1px solid var(--line-soft);">
               <div>${esc(type)}</div>
               <div style="font-weight:600;text-align:right;">
-                1-ci: ${fmt(v.kg)} kq${v.kg2 ? `<br/><span style="font-weight:500;color:var(--muted);">2-ci: ${fmt(v.kg2)} kq (fərq ${fmt(v.kg2 - v.kg)})</span>` : ""}
+                ${v.kgStated ? `<span style="font-weight:500;color:var(--muted);">Deyilən: ${fmt(v.kgStated)} kq</span><br/>` : ""}1-ci: ${fmt(v.kg)} kq${v.kg2 ? `<br/><span style="font-weight:500;color:var(--muted);">2-ci: ${fmt(v.kg2)} kq (fərq ${fmt(v.kg2 - v.kg)})</span>` : ""}
               </div>
             </div>
           `).join("")}
           <div style="margin-top:6px;padding-top:6px;border-top:1.5px solid var(--line);font-size:13px;font-weight:700;color:var(--ink);">
-            Cəmi (1-ci): ${fmt(totalKg)} kq${totalKg2 ? ` · Cəmi (2-ci): ${fmt(totalKg2)} kq` : ""}
+            ${totalKgStated ? `Cəmi (deyilən): ${fmt(totalKgStated)} kq · ` : ""}Cəmi (1-ci): ${fmt(totalKg)} kq${totalKg2 ? ` · Cəmi (2-ci): ${fmt(totalKg2)} kq` : ""}
           </div>
         </div>`;
       }).join("");
@@ -1870,6 +1873,7 @@
         <div class="toggle-row">
           ${GOODS_TYPES.map((t) => `<button class="toggle-btn ${goodsType === t ? "active-ink" : ""}" data-goods-type="${esc(t)}">${esc(t)}</button>`).join("")}
         </div>
+        <div class="field-row"><div class="field"><label>Deyilən çəki (kq, məcburi deyil)</label><input id="giKgStated" type="number" inputmode="decimal" placeholder="0" /></div></div>
         <div class="field-row">
           <div class="field"><label>1-ci çəkidən sonra (kq)</label><input id="giKg" type="number" inputmode="decimal" placeholder="0" /></div>
           <div class="field"><label>2-ci çəkidən sonra (kq, məcburi deyil)</label><input id="giKg2" type="number" inputmode="decimal" placeholder="0" /></div>
@@ -1957,7 +1961,7 @@ Cəmi: ${fmt(r.totalSalesKg)} kq, məbləğ ${fmt(r.totalSalesSum)}
 ${r.driverSummaries.length ? r.driverSummaries.map((d) => `• ${d.driver}: avans ${fmt(d.advance)}`).join("\n") : "qeyd yoxdur"}
 
 📦 Mal gətirmə:
-${r.goodsIntakeDay.length ? r.goodsIntakeDay.map((g) => `• ${g.gətirən}: ${fmt(g.kg)} kq${g.kg2 ? ` → 2-ci çəki ${fmt(g.kg2)} kq (fərq ${fmt(g.kg2 - g.kg)})` : ""} [${g.type}]${g.kimdenAlib ? ` (${g.kimdenAlib}dan)` : ""}`).join("\n") : "qeyd yoxdur"}
+${r.goodsIntakeDay.length ? r.goodsIntakeDay.map((g) => `• ${g.gətirən}: ${g.kgStated ? `deyilən ${fmt(g.kgStated)} kq → ` : ""}${fmt(g.kg)} kq${g.kg2 ? ` → 2-ci çəki ${fmt(g.kg2)} kq (fərq ${fmt(g.kg2 - g.kg)})` : ""} [${g.type}]${g.kimdenAlib ? ` (${g.kimdenAlib}dan)` : ""}`).join("\n") : "qeyd yoxdur"}
 
 💵 Kassa:
 Mədaxil: +${fmt(r.cashIn)}${Object.entries(r.cashBreakdown.in).map(([src, sum]) => `\n  · ${CASH_SOURCE_LABELS[src] || src}: +${fmt(sum)}`).join("")}
@@ -2046,8 +2050,8 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     rows.push([]);
 
     rows.push(["Mal gətirmə"]);
-    rows.push(["Gətirən", "Kimdən alıb", "Növ", "1-ci çəki (kq)", "2-ci çəki (kq)"]);
-    r.goodsIntakeDay.forEach((g) => rows.push([g.gətirən, g.kimdenAlib || "", g.type || "", g.kg, g.kg2 || ""]));
+    rows.push(["Gətirən", "Kimdən alıb", "Növ", "Deyilən çəki (kq)", "1-ci çəki (kq)", "2-ci çəki (kq)"]);
+    r.goodsIntakeDay.forEach((g) => rows.push([g.gətirən, g.kimdenAlib || "", g.type || "", g.kgStated || "", g.kg, g.kg2 || ""]));
     rows.push([]);
 
     rows.push(["Kassa"]);
@@ -2125,7 +2129,7 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     const driverAdvRows = r.driverAdvancesDay.map((a) => ({ Tarix: a.date, Sürücü: a.driver, Məbləğ: a.sum, Qeyd: a.note || "" }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(driverAdvRows.length ? driverAdvRows : [{ Tarix: reportDate, Sürücü: "qeyd yoxdur" }]), "Sürücü avansı");
 
-    const goodsIntakeRows = r.goodsIntakeDay.map((g) => ({ Tarix: g.date, Vaxt: g.time || "", "Kimdən alıb": g.kimdenAlib || "", Növ: g.type || "", "1-ci çəki (kq)": g.kg, "2-ci çəki (kq)": g.kg2 || "", "Fərq (kq)": g.kg2 ? Number((g.kg2 - g.kg).toFixed(2)) : "", Gətirən: g.gətirən }));
+    const goodsIntakeRows = r.goodsIntakeDay.map((g) => ({ Tarix: g.date, Vaxt: g.time || "", "Kimdən alıb": g.kimdenAlib || "", Növ: g.type || "", "Deyilən çəki (kq)": g.kgStated || "", "1-ci çəki (kq)": g.kg, "2-ci çəki (kq)": g.kg2 || "", "Fərq (kq)": g.kg2 ? Number((g.kg2 - g.kg).toFixed(2)) : "", Gətirən: g.gətirən }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(goodsIntakeRows.length ? goodsIntakeRows : [{ Tarix: reportDate, Gətirən: "qeyd yoxdur" }]), "Mal gətirmə");
 
     const driverSummaryRows = r.driverSummaries.map((d) => ({ Sürücü: d.driver, Avans: d.advance }));
@@ -2170,7 +2174,7 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(truckRowsAll.length ? truckRowsAll : [{ Tarix: "", Sürücü: "qeyd yoxdur" }]), "Maşın");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.driverAdvances.map((a) => ({ Tarix: a.date, Sürücü: a.driver, Məbləğ: a.sum, Qeyd: a.note || "" }))), "Sürücü avansı");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.goodsIntake.map((g) => ({ Tarix: g.date, Vaxt: g.time || "", "Kimdən alıb": g.kimdenAlib || "", Növ: g.type || "", "1-ci çəki (kq)": g.kg, "2-ci çəki (kq)": g.kg2 || "", "Fərq (kq)": g.kg2 ? Number((g.kg2 - g.kg).toFixed(2)) : "", Gətirən: g.gətirən }))), "Mal gətirmə");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.goodsIntake.map((g) => ({ Tarix: g.date, Vaxt: g.time || "", "Kimdən alıb": g.kimdenAlib || "", Növ: g.type || "", "Deyilən çəki (kq)": g.kgStated || "", "1-ci çəki (kq)": g.kg, "2-ci çəki (kq)": g.kg2 || "", "Fərq (kq)": g.kg2 ? Number((g.kg2 - g.kg).toFixed(2)) : "", Gətirən: g.gətirən }))), "Mal gətirmə");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.fuelLog.map((f) => ({ Tarix: f.date, Vaxt: f.time || "", Traktorist: f.tractorist, Litr: f.liters, Növ: f.type || "", Qeyd: f.note || "" }))), "Yanacaq");
     XLSX.writeFile(wb, `hamisi_${todayISO()}.xlsx`);
   }
@@ -2465,11 +2469,16 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
       btn.onclick = () => { goodsType = btn.dataset.goodsType; renderTabContent(); };
     });
     function updateGiDiff() {
+      const kgStated = Number(document.getElementById("giKgStated").value) || 0;
       const kg = Number(document.getElementById("giKg").value) || 0;
       const kg2 = Number(document.getElementById("giKg2").value) || 0;
       const el = document.getElementById("giDiffDisplay");
-      el.innerHTML = kg > 0 && kg2 > 0 ? `Fərq: ${fmt(kg2 - kg)} kq` : "";
+      const parts = [];
+      if (kgStated > 0 && kg > 0) parts.push(`Deyilən → 1-ci fərq: ${fmt(kg - kgStated)} kq`);
+      if (kg > 0 && kg2 > 0) parts.push(`1-ci → 2-ci fərq: ${fmt(kg2 - kg)} kq`);
+      el.innerHTML = parts.join(" · ");
     }
+    document.getElementById("giKgStated").oninput = updateGiDiff;
     document.getElementById("giKg").oninput = updateGiDiff;
     document.getElementById("giKg2").oninput = updateGiDiff;
     updateGiDiff();
@@ -2478,10 +2487,13 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
       const carrier = document.getElementById("giCarrier").value.trim();
       if (!kg || !carrier) return;
       const from = document.getElementById("giFrom").value.trim();
+      const kgStatedRaw = document.getElementById("giKgStated").value;
+      const kgStated = kgStatedRaw !== "" ? Number(kgStatedRaw) : 0;
       const kg2Raw = document.getElementById("giKg2").value;
       const kg2 = kg2Raw !== "" ? Number(kg2Raw) : 0;
-      await addGoodsIntake({ date: state.goodsDate, kimdenAlib: from, type: goodsType, kg, kg2, gətirən: carrier });
+      await addGoodsIntake({ date: state.goodsDate, kimdenAlib: from, type: goodsType, kgStated, kg, kg2, gətirən: carrier });
       document.getElementById("giFrom").value = "";
+      document.getElementById("giKgStated").value = "";
       document.getElementById("giKg").value = "";
       document.getElementById("giKg2").value = "";
       document.getElementById("giCarrier").value = "";
