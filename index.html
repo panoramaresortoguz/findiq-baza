@@ -924,6 +924,11 @@
   async function deleteGoodsIntake(id) {
     await deleteDoc("goodsIntake", id);
   }
+  // Fills in the second weighing on an existing record — used when the truck arrives later
+  // and the same load is weighed again, so the two weighings stay tied to one entry.
+  async function addSecondWeighing(id, kg2) {
+    await updateDoc("goodsIntake", id, { kg2, kg2Time: nowTime() });
+  }
 
   // Builds a chronological ledger for one person's debts: every entry plus the running
   // balance after it, so "gave 500, got back 200" reads as a clear timeline ending at 300.
@@ -1777,7 +1782,7 @@
             ? '<div class="empty">Hələlik boşdur</div>'
             : sortByTs(advDay).reverse().map((a) => `
               <div class="list-row">
-                <div><div class="title">${esc(a.driver)}</div><div class="meta">${esc(a.date)}${a.note ? " · " + esc(a.note) : ""}</div></div>
+                <div><div class="title">${esc(a.driver)}</div><div class="meta">${esc(a.date)}${a.ts ? " · " + fmtTime(a.ts) : ""}${a.note ? " · " + esc(a.note) : ""}</div></div>
                 <div style="display:flex;align-items:center;gap:10px;">
                   <div class="right red">−${fmt(a.sum)}</div>
                   <button class="del-btn" data-del-adv="${a.id}">${ICONS.trash}</button>
@@ -1874,13 +1879,45 @@
           ${GOODS_TYPES.map((t) => `<button class="toggle-btn ${goodsType === t ? "active-ink" : ""}" data-goods-type="${esc(t)}">${esc(t)}</button>`).join("")}
         </div>
         <div class="field-row"><div class="field"><label>Deyilən çəki (kq, məcburi deyil)</label><input id="giKgStated" type="number" inputmode="decimal" placeholder="0" /></div></div>
-        <div class="field-row">
-          <div class="field"><label>1-ci çəkidən sonra (kq)</label><input id="giKg" type="number" inputmode="decimal" placeholder="0" /></div>
-          <div class="field"><label>2-ci çəkidən sonra (kq, məcburi deyil)</label><input id="giKg2" type="number" inputmode="decimal" placeholder="0" /></div>
-        </div>
-        <div id="giDiffDisplay" style="text-align:center;font-size:12.5px;color:var(--muted);margin-bottom:10px;"></div>
+        <div class="field-row"><div class="field"><label>1-ci çəkidən sonra (kq)</label><input id="giKg" type="number" inputmode="decimal" placeholder="0" /></div></div>
         <div class="field-row"><div class="field"><label>Gətirən</label><input id="giCarrier" list="carrierNamesList" placeholder="Sürücü və ya alıcı adı" /></div></div>
         <button class="btn" id="giSubmit">${ICONS.plus} Mal gətirməsini qeyd et</button>
+        <div class="time-note">Maşın gələndə 2-ci çəkini aşağıdakı "Qeydlər" siyahısından həmin qeydə əlavə edə bilərsən.</div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">${esc(date)} — qeydlər (${dayIntake.length})</div>
+        ${
+          dayIntake.length === 0
+            ? '<div class="empty">Bu tarixdə qeyd yoxdur</div>'
+            : sortByTs(dayIntake).reverse().map((g) => `
+              <div class="card-box">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                  <div>
+                    <div style="font-weight:700;color:var(--ink);">${esc(g.gətirən)} · ${esc(g.type)}</div>
+                    <div style="font-size:12px;color:var(--muted);margin-top:2px;">${esc(g.date)}${g.time ? " · " + esc(g.time) : ""}${g.kimdenAlib ? " · " + esc(g.kimdenAlib) + "dan" : ""}</div>
+                  </div>
+                  <button class="del-btn" data-del-goods="${g.id}">${ICONS.trash}</button>
+                </div>
+                <div style="font-size:13px;margin-top:8px;line-height:1.7;">
+                  ${g.kgStated ? `Deyilən: <b>${fmt(g.kgStated)} kq</b><br/>` : ""}
+                  1-ci çəki: <b>${fmt(g.kg)} kq</b>
+                  ${
+                    g.kg2
+                      ? `<br/>2-ci çəki: <b>${fmt(g.kg2)} kq</b>${g.kg2Time ? ` (${esc(g.kg2Time)})` : ""} — <span style="font-weight:700;color:${Math.abs(g.kg2 - g.kg) > 0.5 ? "var(--red)" : "var(--green)"};">fərq ${fmt(g.kg2 - g.kg)} kq</span>`
+                      : ""
+                  }
+                </div>
+                ${
+                  !g.kg2
+                    ? `<div class="field-row" style="margin-top:10px;">
+                        <div class="field"><input class="secondWeighInput" type="number" inputmode="decimal" placeholder="2-ci çəkidən sonra (kq)" /></div>
+                        <button class="btn-outline" style="width:auto;padding:9px 16px;flex-shrink:0;" data-add-kg2="${g.id}">Əlavə et</button>
+                      </div>`
+                    : ""
+                }
+              </div>`).join("")
+        }
       </div>
 
       <div class="section">
@@ -2468,20 +2505,6 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     document.querySelectorAll("[data-goods-type]").forEach((btn) => {
       btn.onclick = () => { goodsType = btn.dataset.goodsType; renderTabContent(); };
     });
-    function updateGiDiff() {
-      const kgStated = Number(document.getElementById("giKgStated").value) || 0;
-      const kg = Number(document.getElementById("giKg").value) || 0;
-      const kg2 = Number(document.getElementById("giKg2").value) || 0;
-      const el = document.getElementById("giDiffDisplay");
-      const parts = [];
-      if (kgStated > 0 && kg > 0) parts.push(`Deyilən → 1-ci fərq: ${fmt(kg - kgStated)} kq`);
-      if (kg > 0 && kg2 > 0) parts.push(`1-ci → 2-ci fərq: ${fmt(kg2 - kg)} kq`);
-      el.innerHTML = parts.join(" · ");
-    }
-    document.getElementById("giKgStated").oninput = updateGiDiff;
-    document.getElementById("giKg").oninput = updateGiDiff;
-    document.getElementById("giKg2").oninput = updateGiDiff;
-    updateGiDiff();
     document.getElementById("giSubmit").onclick = async () => {
       const kg = Number(document.getElementById("giKg").value);
       const carrier = document.getElementById("giCarrier").value.trim();
@@ -2489,15 +2512,23 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
       const from = document.getElementById("giFrom").value.trim();
       const kgStatedRaw = document.getElementById("giKgStated").value;
       const kgStated = kgStatedRaw !== "" ? Number(kgStatedRaw) : 0;
-      const kg2Raw = document.getElementById("giKg2").value;
-      const kg2 = kg2Raw !== "" ? Number(kg2Raw) : 0;
-      await addGoodsIntake({ date: state.goodsDate, kimdenAlib: from, type: goodsType, kgStated, kg, kg2, gətirən: carrier });
+      await addGoodsIntake({ date: state.goodsDate, kimdenAlib: from, type: goodsType, kgStated, kg, gətirən: carrier });
       document.getElementById("giFrom").value = "";
       document.getElementById("giKgStated").value = "";
       document.getElementById("giKg").value = "";
-      document.getElementById("giKg2").value = "";
       document.getElementById("giCarrier").value = "";
     };
+    document.querySelectorAll("[data-del-goods]").forEach((btn) => {
+      btn.onclick = () => deleteGoodsIntake(btn.dataset.delGoods);
+    });
+    document.querySelectorAll("[data-add-kg2]").forEach((btn) => {
+      btn.onclick = async () => {
+        const input = btn.closest(".card-box").querySelector(".secondWeighInput");
+        const kg2 = Number(input.value);
+        if (!kg2) return;
+        await addSecondWeighing(btn.dataset.addKg2, kg2);
+      };
+    });
     document.getElementById("giMonth").onchange = (e) => { state.goodsIntakeMonth = e.target.value; renderTabContent(); };
   }
 
