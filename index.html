@@ -419,11 +419,12 @@
   }
 
   // Deletes the exact cashLog entry that was created together with a record (clean history).
-  // Falls back to a compensating entry only for old records saved before this linking existed.
+  // Falls back to a compensating entry only for old records saved before this linking existed —
+  // never for records explicitly marked noCash, since those never touched the kassa to begin with.
   async function removeLinkedCash(record, fallbackType, fallbackNote) {
     if (record && record.cashLogId) {
       await deleteDoc("cashLog", record.cashLogId);
-    } else if (record) {
+    } else if (record && !record.noCash) {
       await logCash(todayISO(), fallbackType, record.sum, fallbackNote, { source: "adjustment" });
     }
   }
@@ -802,7 +803,7 @@
   // goods (e.g. a purchase not fully paid for) rather than actual cash changing hands.
   async function addDebtNoCash(d) {
     const date = d.date || todayISO();
-    const entry = { paid: false, ...d, date, cashLogId: null, ts: Date.now() };
+    const entry = { paid: false, ...d, date, cashLogId: null, noCash: true, ts: Date.now() };
     await addDoc("debts", entry);
   }
   async function toggleDebtPaid(id) {
@@ -1156,7 +1157,7 @@
                     <div><div class="title">${esc(c.note || (c.type === "in" ? "Mədaxil" : "Çıxarış"))}</div><div class="meta">${esc(c.date)}${c.ts ? " · " + fmtTime(c.ts) : ""}</div></div>
                     <div style="display:flex;align-items:center;gap:10px;">
                       <div class="right ${c.type === "in" ? "green" : "red"}">${c.type === "in" ? "+" : "−"}${fmt(c.sum)}</div>
-                      ${c.manual ? `<button class="del-btn" data-del-cash="${c.id}">${ICONS.trash}</button>` : ""}
+                      ${c.manual || c.source === "adjustment" ? `<button class="del-btn" data-del-cash="${c.id}">${ICONS.trash}</button>` : ""}
                     </div>
                   </div>`).join("")}
               </div>`
