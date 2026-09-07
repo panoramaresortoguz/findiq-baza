@@ -282,6 +282,7 @@
     salesImportFileName: "",
     driversDate: todayISO(),
     goodsIntakeMonth: todayISO().slice(0, 7),
+    goodsDate: todayISO(),
     kassaDate: todayISO(),
     purchasesDate: todayISO(),
     salesDate: todayISO(),
@@ -333,6 +334,7 @@
     download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg>',
     sell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 7 13.5 15.5 8.5 10.5 2 17"/><path d="M16 7h6v6"/></svg>',
     driver: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>',
+    scale: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 7h18M5 7l-2 6a3 3 0 0 0 6 0Zm14 0-2 6a3 3 0 0 0 6 0Z"/></svg>',
   };
 
   const TABS = [
@@ -345,6 +347,7 @@
     { id: "attendance", label: "Davamiyyət", icon: "calendar", ownerOnly: true },
     { id: "truck", label: "Nəqliyyat", icon: "truck", ownerOnly: true },
     { id: "drivers", label: "Sürücülər", icon: "driver", ownerOnly: true },
+    { id: "goods", label: "Mal gətirmə", icon: "scale", ownerOnly: true },
   ];
 
   // ---------- Firestore live sync ----------
@@ -1071,6 +1074,7 @@
     else if (state.tab === "attendance" && isOwner()) el.innerHTML = renderAttendanceTab();
     else if (state.tab === "truck" && isOwner()) el.innerHTML = renderTruckTab();
     else if (state.tab === "drivers" && isOwner()) el.innerHTML = renderDriversTab();
+    else if (state.tab === "goods" && isOwner()) el.innerHTML = renderGoodsTab();
     else el.innerHTML = renderReportTab();
     attachTabEvents();
 
@@ -1717,63 +1721,12 @@
   }
 
   // ---------- Drivers (Sürücülər) ----------
-  let goodsType = GOODS_TYPES[0];
   function renderDriversTab() {
     const date = state.driversDate;
     const summaries = buildDriverSummaries(date);
     const advDay = state.driverAdvances.filter((a) => a.date === date);
 
     const driverOptions = state.drivers.map((d) => `<option value="${esc(d.name)}"></option>`).join("");
-    const carrierOptions = [...state.drivers.map((d) => d.name), ...state.buyers.map((b) => b.name)]
-      .map((n) => `<option value="${esc(n)}"></option>`).join("");
-
-    // Daily goods-intake summary, grouped by who brought it, then by type
-    const dayIntake = state.goodsIntake.filter((g) => g.date === date);
-    const byCarrier = {};
-    dayIntake.forEach((g) => {
-      if (!byCarrier[g.gətirən]) byCarrier[g.gətirən] = {};
-      if (!byCarrier[g.gətirən][g.type]) byCarrier[g.gətirən][g.type] = { kg: 0, kg2: 0, bags: 0 };
-      byCarrier[g.gətirən][g.type].kg += g.kg;
-      byCarrier[g.gətirən][g.type].kg2 += g.kg2 || 0;
-      byCarrier[g.gətirən][g.type].bags += g.bags;
-    });
-
-    // Monthly goods-intake summary, same grouping, for month-end totals
-    const month = state.goodsIntakeMonth;
-    const monthIntake = state.goodsIntake.filter((g) => g.date.startsWith(month));
-    const byCarrierMonth = {};
-    monthIntake.forEach((g) => {
-      if (!byCarrierMonth[g.gətirən]) byCarrierMonth[g.gətirən] = {};
-      if (!byCarrierMonth[g.gətirən][g.type]) byCarrierMonth[g.gətirən][g.type] = { kg: 0, kg2: 0, bags: 0 };
-      byCarrierMonth[g.gətirən][g.type].kg += g.kg;
-      byCarrierMonth[g.gətirən][g.type].kg2 += g.kg2 || 0;
-      byCarrierMonth[g.gətirən][g.type].bags += g.bags;
-    });
-
-    function renderCarrierTable(byCarrierData) {
-      const carriers = Object.keys(byCarrierData);
-      if (!carriers.length) return '<div class="empty">Hələ məlumat yoxdur</div>';
-      return carriers.map((carrier) => {
-        const types = byCarrierData[carrier];
-        const totalKg = Object.values(types).reduce((s, v) => s + v.kg, 0);
-        const totalKg2 = Object.values(types).reduce((s, v) => s + v.kg2, 0);
-        const totalBags = Object.values(types).reduce((s, v) => s + v.bags, 0);
-        return `<div class="card-box">
-          <div style="font-weight:700;color:var(--ink);margin-bottom:6px;">${esc(carrier)}</div>
-          ${Object.entries(types).map(([type, v]) => `
-            <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-top:1px solid var(--line-soft);">
-              <div>${esc(type)}</div>
-              <div style="font-weight:600;text-align:right;">
-                1-ci: ${fmt(v.kg)} kq${v.kg2 ? `<br/><span style="font-weight:500;color:var(--muted);">2-ci: ${fmt(v.kg2)} kq (fərq ${fmt(v.kg2 - v.kg)})</span>` : ""}${v.bags ? `<br/><span style="font-weight:500;">${fmt(v.bags)} meşok</span>` : ""}
-              </div>
-            </div>
-          `).join("")}
-          <div style="margin-top:6px;padding-top:6px;border-top:1.5px solid var(--line);font-size:13px;font-weight:700;color:var(--ink);">
-            Cəmi (1-ci): ${fmt(totalKg)} kq${totalKg2 ? ` · Cəmi (2-ci): ${fmt(totalKg2)} kq` : ""}${totalBags ? ` · ${fmt(totalBags)} meşok` : ""}
-          </div>
-        </div>`;
-      }).join("");
-    }
 
     return `
       <div class="section"><div class="section-title">Tarix</div>
@@ -1796,24 +1749,7 @@
         </div>
       </div>
 
-      <div class="section">
-        <div class="section-title">Alıcılar (sürücü olmayanlar)</div>
-        <div class="field-row"><div class="field"><input id="buyerNameInput" placeholder="Alıcının adı" /></div></div>
-        <div style="margin-bottom:10px;"><button class="btn-outline" id="addBuyerBtn">${ICONS.plus} Alıcı əlavə et</button></div>
-        <div>
-          ${
-            state.buyers.length === 0
-              ? '<div class="empty">Hələ alıcı əlavə edilməyib</div>'
-              : state.buyers.map((b) => `
-                <span class="chip" style="cursor:default;">${esc(b.name)}
-                  <button data-del-buyer="${b.id}" style="background:none;border:none;color:var(--red);opacity:0.6;cursor:pointer;margin-left:4px;">✕</button>
-                </span>`).join("")
-          }
-        </div>
-      </div>
-
       <datalist id="driverNamesList">${driverOptions}</datalist>
-      <datalist id="carrierNamesList">${carrierOptions}</datalist>
 
       <div class="section">
         <div class="section-title">Sürücüyə avans ver (səhər)</div>
@@ -1849,6 +1785,83 @@
               </div>`).join("")
         }
       </div>
+    `;
+  }
+
+  // ---------- Mal gətirmə (goods intake — independent of kassa) ----------
+  let goodsType = GOODS_TYPES[0];
+  function renderGoodsTab() {
+    const date = state.goodsDate;
+    const carrierOptions = [...state.drivers.map((d) => d.name), ...state.buyers.map((b) => b.name)]
+      .map((n) => `<option value="${esc(n)}"></option>`).join("");
+
+    // Daily goods-intake summary, grouped by who brought it, then by type
+    const dayIntake = state.goodsIntake.filter((g) => g.date === date);
+    const byCarrier = {};
+    dayIntake.forEach((g) => {
+      if (!byCarrier[g.gətirən]) byCarrier[g.gətirən] = {};
+      if (!byCarrier[g.gətirən][g.type]) byCarrier[g.gətirən][g.type] = { kg: 0, kg2: 0 };
+      byCarrier[g.gətirən][g.type].kg += g.kg;
+      byCarrier[g.gətirən][g.type].kg2 += g.kg2 || 0;
+    });
+
+    // Monthly goods-intake summary, same grouping, for month-end totals
+    const month = state.goodsIntakeMonth;
+    const monthIntake = state.goodsIntake.filter((g) => g.date.startsWith(month));
+    const byCarrierMonth = {};
+    monthIntake.forEach((g) => {
+      if (!byCarrierMonth[g.gətirən]) byCarrierMonth[g.gətirən] = {};
+      if (!byCarrierMonth[g.gətirən][g.type]) byCarrierMonth[g.gətirən][g.type] = { kg: 0, kg2: 0 };
+      byCarrierMonth[g.gətirən][g.type].kg += g.kg;
+      byCarrierMonth[g.gətirən][g.type].kg2 += g.kg2 || 0;
+    });
+
+    function renderCarrierTable(byCarrierData) {
+      const carriers = Object.keys(byCarrierData);
+      if (!carriers.length) return '<div class="empty">Hələ məlumat yoxdur</div>';
+      return carriers.map((carrier) => {
+        const types = byCarrierData[carrier];
+        const totalKg = Object.values(types).reduce((s, v) => s + v.kg, 0);
+        const totalKg2 = Object.values(types).reduce((s, v) => s + v.kg2, 0);
+        return `<div class="card-box">
+          <div style="font-weight:700;color:var(--ink);margin-bottom:6px;">${esc(carrier)}</div>
+          ${Object.entries(types).map(([type, v]) => `
+            <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-top:1px solid var(--line-soft);">
+              <div>${esc(type)}</div>
+              <div style="font-weight:600;text-align:right;">
+                1-ci: ${fmt(v.kg)} kq${v.kg2 ? `<br/><span style="font-weight:500;color:var(--muted);">2-ci: ${fmt(v.kg2)} kq (fərq ${fmt(v.kg2 - v.kg)})</span>` : ""}
+              </div>
+            </div>
+          `).join("")}
+          <div style="margin-top:6px;padding-top:6px;border-top:1.5px solid var(--line);font-size:13px;font-weight:700;color:var(--ink);">
+            Cəmi (1-ci): ${fmt(totalKg)} kq${totalKg2 ? ` · Cəmi (2-ci): ${fmt(totalKg2)} kq` : ""}
+          </div>
+        </div>`;
+      }).join("");
+    }
+
+    return `
+      <div class="section"><div class="section-title">Tarix</div>
+        <div class="field-row"><div class="field"><input id="goodsDate" type="date" value="${esc(date)}" /></div></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Kim gətirdi (sürücü olmayanlar)</div>
+        <div class="field-row"><div class="field"><input id="buyerNameInput" placeholder="Adı" /></div></div>
+        <div style="margin-bottom:10px;"><button class="btn-outline" id="addBuyerBtn">${ICONS.plus} Əlavə et</button></div>
+        <div>
+          ${
+            state.buyers.length === 0
+              ? '<div class="empty">Hələ heç kim əlavə edilməyib</div>'
+              : state.buyers.map((b) => `
+                <span class="chip" style="cursor:default;">${esc(b.name)}
+                  <button data-del-buyer="${b.id}" style="background:none;border:none;color:var(--red);opacity:0.6;cursor:pointer;margin-left:4px;">✕</button>
+                </span>`).join("")
+          }
+        </div>
+      </div>
+
+      <datalist id="carrierNamesList">${carrierOptions}</datalist>
 
       <div class="section">
         <div class="section-title">Mal gətirmə (kassaya təsir etmir)</div>
@@ -1862,7 +1875,6 @@
           <div class="field"><label>2-ci çəkidən sonra (kq, məcburi deyil)</label><input id="giKg2" type="number" inputmode="decimal" placeholder="0" /></div>
         </div>
         <div id="giDiffDisplay" style="text-align:center;font-size:12.5px;color:var(--muted);margin-bottom:10px;"></div>
-        <div class="field-row"><div class="field"><label>Meşok sayı</label><input id="giBags" type="number" inputmode="decimal" placeholder="0" /></div></div>
         <div class="field-row"><div class="field"><label>Gətirən</label><input id="giCarrier" list="carrierNamesList" placeholder="Sürücü və ya alıcı adı" /></div></div>
         <button class="btn" id="giSubmit">${ICONS.plus} Mal gətirməsini qeyd et</button>
       </div>
@@ -1945,7 +1957,7 @@ Cəmi: ${fmt(r.totalSalesKg)} kq, məbləğ ${fmt(r.totalSalesSum)}
 ${r.driverSummaries.length ? r.driverSummaries.map((d) => `• ${d.driver}: avans ${fmt(d.advance)}`).join("\n") : "qeyd yoxdur"}
 
 📦 Mal gətirmə:
-${r.goodsIntakeDay.length ? r.goodsIntakeDay.map((g) => `• ${g.gətirən}: ${fmt(g.kg)} kq${g.kg2 ? ` → 2-ci çəki ${fmt(g.kg2)} kq (fərq ${fmt(g.kg2 - g.kg)})` : ""} [${g.type}]${g.bags ? `, ${g.bags} meşok` : ""}${g.kimdenAlib ? ` (${g.kimdenAlib}dan)` : ""}`).join("\n") : "qeyd yoxdur"}
+${r.goodsIntakeDay.length ? r.goodsIntakeDay.map((g) => `• ${g.gətirən}: ${fmt(g.kg)} kq${g.kg2 ? ` → 2-ci çəki ${fmt(g.kg2)} kq (fərq ${fmt(g.kg2 - g.kg)})` : ""} [${g.type}]${g.kimdenAlib ? ` (${g.kimdenAlib}dan)` : ""}`).join("\n") : "qeyd yoxdur"}
 
 💵 Kassa:
 Mədaxil: +${fmt(r.cashIn)}${Object.entries(r.cashBreakdown.in).map(([src, sum]) => `\n  · ${CASH_SOURCE_LABELS[src] || src}: +${fmt(sum)}`).join("")}
@@ -2034,8 +2046,8 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     rows.push([]);
 
     rows.push(["Mal gətirmə"]);
-    rows.push(["Gətirən", "Kimdən alıb", "Növ", "1-ci çəki (kq)", "2-ci çəki (kq)", "Meşok sayı"]);
-    r.goodsIntakeDay.forEach((g) => rows.push([g.gətirən, g.kimdenAlib || "", g.type || "", g.kg, g.kg2 || "", g.bags || 0]));
+    rows.push(["Gətirən", "Kimdən alıb", "Növ", "1-ci çəki (kq)", "2-ci çəki (kq)"]);
+    r.goodsIntakeDay.forEach((g) => rows.push([g.gətirən, g.kimdenAlib || "", g.type || "", g.kg, g.kg2 || ""]));
     rows.push([]);
 
     rows.push(["Kassa"]);
@@ -2113,7 +2125,7 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     const driverAdvRows = r.driverAdvancesDay.map((a) => ({ Tarix: a.date, Sürücü: a.driver, Məbləğ: a.sum, Qeyd: a.note || "" }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(driverAdvRows.length ? driverAdvRows : [{ Tarix: reportDate, Sürücü: "qeyd yoxdur" }]), "Sürücü avansı");
 
-    const goodsIntakeRows = r.goodsIntakeDay.map((g) => ({ Tarix: g.date, Vaxt: g.time || "", "Kimdən alıb": g.kimdenAlib || "", Növ: g.type || "", "1-ci çəki (kq)": g.kg, "2-ci çəki (kq)": g.kg2 || "", "Fərq (kq)": g.kg2 ? Number((g.kg2 - g.kg).toFixed(2)) : "", "Meşok sayı": g.bags || 0, Gətirən: g.gətirən }));
+    const goodsIntakeRows = r.goodsIntakeDay.map((g) => ({ Tarix: g.date, Vaxt: g.time || "", "Kimdən alıb": g.kimdenAlib || "", Növ: g.type || "", "1-ci çəki (kq)": g.kg, "2-ci çəki (kq)": g.kg2 || "", "Fərq (kq)": g.kg2 ? Number((g.kg2 - g.kg).toFixed(2)) : "", Gətirən: g.gətirən }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(goodsIntakeRows.length ? goodsIntakeRows : [{ Tarix: reportDate, Gətirən: "qeyd yoxdur" }]), "Mal gətirmə");
 
     const driverSummaryRows = r.driverSummaries.map((d) => ({ Sürücü: d.driver, Avans: d.advance }));
@@ -2158,7 +2170,7 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(truckRowsAll.length ? truckRowsAll : [{ Tarix: "", Sürücü: "qeyd yoxdur" }]), "Maşın");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.driverAdvances.map((a) => ({ Tarix: a.date, Sürücü: a.driver, Məbləğ: a.sum, Qeyd: a.note || "" }))), "Sürücü avansı");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.goodsIntake.map((g) => ({ Tarix: g.date, Vaxt: g.time || "", "Kimdən alıb": g.kimdenAlib || "", Növ: g.type || "", "1-ci çəki (kq)": g.kg, "2-ci çəki (kq)": g.kg2 || "", "Fərq (kq)": g.kg2 ? Number((g.kg2 - g.kg).toFixed(2)) : "", "Meşok sayı": g.bags || 0, Gətirən: g.gətirən }))), "Mal gətirmə");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.goodsIntake.map((g) => ({ Tarix: g.date, Vaxt: g.time || "", "Kimdən alıb": g.kimdenAlib || "", Növ: g.type || "", "1-ci çəki (kq)": g.kg, "2-ci çəki (kq)": g.kg2 || "", "Fərq (kq)": g.kg2 ? Number((g.kg2 - g.kg).toFixed(2)) : "", Gətirən: g.gətirən }))), "Mal gətirmə");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.fuelLog.map((f) => ({ Tarix: f.date, Vaxt: f.time || "", Traktorist: f.tractorist, Litr: f.liters, Növ: f.type || "", Qeyd: f.note || "" }))), "Yanacaq");
     XLSX.writeFile(wb, `hamisi_${todayISO()}.xlsx`);
   }
@@ -2173,6 +2185,7 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     else if (state.tab === "attendance") wireAttendance();
     else if (state.tab === "truck") wireTruck();
     else if (state.tab === "drivers") wireDrivers();
+    else if (state.tab === "goods") wireGoods();
     else if (state.tab === "report") wireReport();
   }
 
@@ -2420,16 +2433,6 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
       btn.onclick = () => removeDriver(btn.dataset.delDriver);
     });
 
-    document.getElementById("addBuyerBtn").onclick = async () => {
-      const name = document.getElementById("buyerNameInput").value.trim();
-      if (!name) return;
-      await addBuyer(name);
-      document.getElementById("buyerNameInput").value = "";
-    };
-    document.querySelectorAll("[data-del-buyer]").forEach((btn) => {
-      btn.onclick = () => removeBuyer(btn.dataset.delBuyer);
-    });
-
     document.getElementById("advSubmit").onclick = async () => {
       const driver = document.getElementById("advDriver").value.trim();
       const sum = Number(document.getElementById("advSum").value);
@@ -2442,6 +2445,20 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     };
     document.querySelectorAll("[data-del-adv]").forEach((btn) => {
       btn.onclick = () => deleteDriverAdvance(btn.dataset.delAdv);
+    });
+  }
+
+  function wireGoods() {
+    document.getElementById("goodsDate").onchange = (e) => { state.goodsDate = e.target.value; renderTabContent(); };
+
+    document.getElementById("addBuyerBtn").onclick = async () => {
+      const name = document.getElementById("buyerNameInput").value.trim();
+      if (!name) return;
+      await addBuyer(name);
+      document.getElementById("buyerNameInput").value = "";
+    };
+    document.querySelectorAll("[data-del-buyer]").forEach((btn) => {
+      btn.onclick = () => removeBuyer(btn.dataset.delBuyer);
     });
 
     document.querySelectorAll("[data-goods-type]").forEach((btn) => {
@@ -2463,12 +2480,10 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
       const from = document.getElementById("giFrom").value.trim();
       const kg2Raw = document.getElementById("giKg2").value;
       const kg2 = kg2Raw !== "" ? Number(kg2Raw) : 0;
-      const bags = Number(document.getElementById("giBags").value) || 0;
-      await addGoodsIntake({ date: state.driversDate, kimdenAlib: from, type: goodsType, kg, kg2, bags, gətirən: carrier });
+      await addGoodsIntake({ date: state.goodsDate, kimdenAlib: from, type: goodsType, kg, kg2, gətirən: carrier });
       document.getElementById("giFrom").value = "";
       document.getElementById("giKg").value = "";
       document.getElementById("giKg2").value = "";
-      document.getElementById("giBags").value = "";
       document.getElementById("giCarrier").value = "";
     };
     document.getElementById("giMonth").onchange = (e) => { state.goodsIntakeMonth = e.target.value; renderTabContent(); };
