@@ -310,6 +310,11 @@
   function sortByTs(arr) {
     return [...arr].sort((a, b) => (a.ts || 0) - (b.ts || 0));
   }
+  // A purchase's actual cash outflow — if it was only partly paid (the rest recorded as
+  // debt to the supplier), totals must use this, not the full agreed sum, to match kassa.
+  function purchasePaid(p) {
+    return p.paidNow !== undefined && p.paidNow !== null ? p.paidNow : p.sum;
+  }
   function fmt(n) {
     const num = Number(n) || 0;
     return num.toLocaleString("az-AZ", { maximumFractionDigits: 2 });
@@ -1173,15 +1178,17 @@
   function renderPurchasesTab() {
     const date = state.purchasesDate;
     const dayPurchases = state.purchases.filter((p) => p.date === date);
+    const paidOf = purchasePaid;
     const dayKg = dayPurchases.reduce((s, p) => s + p.kg, 0);
-    const daySum = dayPurchases.reduce((s, p) => s + p.sum, 0);
+    const daySum = dayPurchases.reduce((s, p) => s + paidOf(p), 0);
+    const dayDebtCreated = dayPurchases.reduce((s, p) => s + Math.max(0, p.sum - paidOf(p)), 0);
 
     const byType = {};
     dayPurchases.forEach((p) => {
       const t = p.type || "Digər";
       if (!byType[t]) byType[t] = { kg: 0, sum: 0 };
       byType[t].kg += p.kg;
-      byType[t].sum += p.sum;
+      byType[t].sum += paidOf(p);
     });
     const typeOrder = [...NUT_TYPES, ...Object.keys(byType).filter((t) => !NUT_TYPES.includes(t))];
     const typeRows = typeOrder.filter((t) => byType[t]);
@@ -1192,8 +1199,13 @@
       </div>
       <div class="stat-row">
         <div class="stat-card"><div class="stat-label">${ICONS.package}${esc(date)} — alınıb</div><div class="stat-value">${fmt(dayKg)} kg</div></div>
-        <div class="stat-card green"><div class="stat-label">${ICONS.wallet}${esc(date)} — məbləğ</div><div class="stat-value">${fmt(daySum)}</div></div>
+        <div class="stat-card green"><div class="stat-label">${ICONS.wallet}${esc(date)} — kassadan ödənilən</div><div class="stat-value">${fmt(daySum)}</div></div>
       </div>
+      ${
+        dayDebtCreated > 0
+          ? `<div class="stat-row"><div class="stat-card red"><div class="stat-label">Bu gün borc yaranıb (ödənilməyib)</div><div class="stat-value">${fmt(dayDebtCreated)}</div></div></div>`
+          : ""
+      }
       <div class="section">
         <div class="section-title">Növlər üzrə (${esc(date)})</div>
         ${
@@ -2015,7 +2027,7 @@
     const truckDay = state.truckLoads.filter((t) => t.date === reportDate);
 
     const totalKg = purchases.reduce((s, p) => s + p.kg, 0);
-    const totalPurchaseSum = purchases.reduce((s, p) => s + p.sum, 0);
+    const totalPurchaseSum = purchases.reduce((s, p) => s + purchasePaid(p), 0);
     const totalSalesKg = sales.reduce((s, x) => s + x.kg, 0);
     const totalSalesSum = sales.reduce((s, x) => s + x.sum, 0);
     const totalExpenses = expenses.reduce((s, e) => s + e.sum, 0);
@@ -2045,7 +2057,7 @@
       const t = p.type || "Digər";
       if (!purchaseTypeGroups[t]) purchaseTypeGroups[t] = { kg: 0, sum: 0 };
       purchaseTypeGroups[t].kg += p.kg;
-      purchaseTypeGroups[t].sum += p.sum;
+      purchaseTypeGroups[t].sum += purchasePaid(p);
     });
     const purchaseTypeLines = Object.keys(purchaseTypeGroups).map((t) => {
       const g = purchaseTypeGroups[t];
@@ -2137,9 +2149,9 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     rows.push([]);
 
     rows.push(["Alışlar"]);
-    rows.push(["Tarix", "Vaxt", "Kim", "Kq", "Növ", "Məbləğ", "Qeyd"]);
-    r.purchases.forEach((p) => rows.push([p.date, p.time || "", p.supplier, p.kg, p.type || "", p.sum, p.note || ""]));
-    rows.push(["", "", "CƏMİ", r.totalKg, "", r.totalPurchaseSum, ""]);
+    rows.push(["Tarix", "Vaxt", "Kim", "Kq", "Növ", "Məbləğ (ümumi)", "Kassadan ödənilən", "Qeyd"]);
+    r.purchases.forEach((p) => rows.push([p.date, p.time || "", p.supplier, p.kg, p.type || "", p.sum, purchasePaid(p), p.note || ""]));
+    rows.push(["", "", "CƏMİ", r.totalKg, "", r.purchases.reduce((s, p) => s + p.sum, 0), r.totalPurchaseSum, ""]);
     rows.push([]);
 
     rows.push(["Satışlar"]);
@@ -2192,7 +2204,7 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     const wb = XLSX.utils.book_new();
 
     const purchaseRows = r.purchases.map((p) => ({ Tarix: p.date, Vaxt: p.time || "", "Kim təhvil verdi": p.supplier, Kq: p.kg, Növ: p.type || "", "Orta qiymət (kq)": p.price || "", Məbləğ: p.sum, "Kassadan ödənilən": p.paidNow !== undefined ? p.paidNow : p.sum, Qeyd: p.note || "" }));
-    if (purchaseRows.length) purchaseRows.push({ Tarix: "", Vaxt: "", "Kim təhvil verdi": "CƏMİ", Kq: r.totalKg, Növ: "", "Orta qiymət (kq)": "", Məbləğ: r.totalPurchaseSum, "Kassadan ödənilən": "", Qeyd: "" });
+    if (purchaseRows.length) purchaseRows.push({ Tarix: "", Vaxt: "", "Kim təhvil verdi": "CƏMİ", Kq: r.totalKg, Növ: "", "Orta qiymət (kq)": "", Məbləğ: r.purchases.reduce((s, p) => s + p.sum, 0), "Kassadan ödənilən": r.totalPurchaseSum, Qeyd: "" });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(purchaseRows.length ? purchaseRows : [{ Tarix: reportDate, Qeyd: "qeyd yoxdur" }]), "Alışlar");
 
     const saleRows = r.sales.map((s) => ({ Tarix: s.date, Vaxt: s.time || "", "Kim aldı": s.buyer, Kq: s.kg, Növ: s.type || "", Məbləğ: s.sum, Qeyd: s.note || "" }));
