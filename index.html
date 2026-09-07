@@ -838,17 +838,21 @@
   }
 
   async function addAttendance(a) {
-    await addDoc("attendance", { ts: Date.now(), ...a });
+    await addDoc("attendance", { value: 1, ts: Date.now(), ...a });
   }
   async function removeAttendance(id) {
     await deleteDoc("attendance", id);
   }
+  // Cycles a calendar cell through three states on each click: empty → full day (1) →
+  // half day (0.5) → empty again — so half-shift workers can be marked too.
   async function toggleAttendanceCell(person, date) {
     const existing = state.attendance.find((a) => a.date === date && a.person === person);
-    if (existing) {
-      await removeAttendance(existing.id);
+    if (!existing) {
+      await addAttendance({ date, person, value: 1 });
+    } else if (existing.value === 1) {
+      await updateDoc("attendance", existing.id, { value: 0.5 });
     } else {
-      await addAttendance({ date, person });
+      await removeAttendance(existing.id);
     }
   }
 
@@ -1483,9 +1487,9 @@
     const numDays = daysInMonth(month);
     const days = Array.from({ length: numDays }, (_, i) => i + 1);
     const monthAttendance = state.attendance.filter((a) => a.date.startsWith(month));
-    const presentSet = new Set(monthAttendance.map((a) => a.date + "|" + a.person));
+    const valueMap = new Map(monthAttendance.map((a) => [a.date + "|" + a.person, a.value !== undefined ? a.value : 1]));
     const totals = {};
-    state.workers.forEach((w) => { totals[w.name] = monthAttendance.filter((a) => a.person === w.name).length; });
+    state.workers.forEach((w) => { totals[w.name] = monthAttendance.filter((a) => a.person === w.name).reduce((s, a) => s + (a.value !== undefined ? a.value : 1), 0); });
 
     return `
       <div class="section"><div class="section-title">Ay</div>
@@ -1510,6 +1514,7 @@
 
       <div class="section">
         <div class="section-title">Davamiyyət cədvəli — ${esc(month)}</div>
+        <div class="time-note" style="margin-top:-4px;">Xanaya klik et: boş → tam gün (✓) → yarım gün (½) → yenidən boş.</div>
         ${
           state.workers.length === 0
             ? '<div class="empty">Əvvəlcə işçi əlavə edin</div>'
@@ -1528,12 +1533,18 @@
                         <td style="position:sticky; left:0; background:var(--white); padding:8px 12px; font-weight:600; border-bottom:1px solid var(--line-soft);">${esc(w.name)}</td>
                         ${days.map((d) => {
                           const dateStr = `${month}-${String(d).padStart(2, "0")}`;
-                          const present = presentSet.has(dateStr + "|" + w.name);
+                          const val = valueMap.get(dateStr + "|" + w.name);
+                          const isFull = val === 1;
+                          const isHalf = val === 0.5;
+                          const border = isFull ? "var(--green)" : isHalf ? "#B5952E" : "var(--line)";
+                          const bg = isFull ? "var(--green-bg)" : isHalf ? "#F3EAD2" : "#fff";
+                          const color = isFull ? "var(--green)" : isHalf ? "#8A6D1F" : "var(--muted)";
+                          const label = isFull ? "✓" : isHalf ? "½" : "";
                           return `<td style="padding:3px; text-align:center; border-bottom:1px solid var(--line-soft);">
-                            <button data-att-cell="${esc(w.name)}|${dateStr}" style="width:24px;height:24px;border-radius:6px;border:1.5px solid ${present ? "var(--green)" : "var(--line)"};background:${present ? "var(--green-bg)" : "#fff"};color:${present ? "var(--green)" : "var(--muted)"};cursor:pointer;font-weight:700;font-size:12px;line-height:1;">${present ? "✓" : ""}</button>
+                            <button data-att-cell="${esc(w.name)}|${dateStr}" style="width:24px;height:24px;border-radius:6px;border:1.5px solid ${border};background:${bg};color:${color};cursor:pointer;font-weight:700;font-size:12px;line-height:1;">${label}</button>
                           </td>`;
                         }).join("")}
-                        <td style="padding:8px 12px; text-align:center; font-weight:700; color:var(--ink); border-bottom:1px solid var(--line-soft); background:var(--card);">${totals[w.name] || 0}</td>
+                        <td style="padding:8px 12px; text-align:center; font-weight:700; color:var(--ink); border-bottom:1px solid var(--line-soft); background:var(--card);">${fmt(totals[w.name] || 0)}</td>
                       </tr>
                     `).join("")}
                   </tbody>
@@ -1833,20 +1844,66 @@
         const totalKg2 = Object.values(types).reduce((s, v) => s + v.kg2, 0);
         return `<div class="card-box">
           <div style="font-weight:700;color:var(--ink);margin-bottom:6px;">${esc(carrier)}</div>
-          ${Object.entries(types).map(([type, v]) => `
+          ${Object.entries(types).map(([type, v]) => {
+            const diff = v.kgStated ? Number((v.kg - v.kgStated).toFixed(2)) : null;
+            return `
             <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-top:1px solid var(--line-soft);">
-              <div>${esc(type)}</div>
+              <div>${esc(type)}${diff !== null ? `<br/><span style="font-weight:700;color:${diff < 0 ? "var(--red)" : diff > 0 ? "var(--green)" : "var(--muted)"};">${diff > 0 ? "+" : ""}${fmt(diff)} kq</span>` : ""}</div>
               <div style="font-weight:600;text-align:right;">
                 ${v.kgStated ? `<span style="font-weight:500;color:var(--muted);">Deyilən: ${fmt(v.kgStated)} kq</span><br/>` : ""}1-ci: ${fmt(v.kg)} kq${v.kg2 ? `<br/><span style="font-weight:500;color:var(--muted);">2-ci: ${fmt(v.kg2)} kq (fərq ${fmt(v.kg2 - v.kg)})</span>` : ""}
               </div>
             </div>
-          `).join("")}
+          `;
+          }).join("")}
           <div style="margin-top:6px;padding-top:6px;border-top:1.5px solid var(--line);font-size:13px;font-weight:700;color:var(--ink);">
             ${totalKgStated ? `Cəmi (deyilən): ${fmt(totalKgStated)} kq · ` : ""}Cəmi (1-ci): ${fmt(totalKg)} kq${totalKg2 ? ` · Cəmi (2-ci): ${fmt(totalKg2)} kq` : ""}
           </div>
         </div>`;
       }).join("");
     }
+
+    // Per-type summary (across all carriers): total kg plus how much came in over/under
+    // between the 1st and 2nd weighing — "artıq" (surplus) and "əskik" (shortage).
+    function buildTypeSummary(entries) {
+      const byType = {};
+      entries.forEach((g) => {
+        if (!byType[g.type]) byType[g.type] = { kg: 0, artiq: 0, eskik: 0 };
+        byType[g.type].kg += g.kg;
+        if (g.kg2) {
+          const diff = g.kg2 - g.kg;
+          if (diff > 0) byType[g.type].artiq += diff;
+          else if (diff < 0) byType[g.type].eskik += Math.abs(diff);
+        }
+      });
+      return byType;
+    }
+    function renderTypeSummaryTable(byType) {
+      const types = Object.keys(byType);
+      if (!types.length) return '<div class="empty">Hələ məlumat yoxdur</div>';
+      return `<div style="overflow-x:auto; border:1px solid var(--line-soft); border-radius:10px;">
+        <table style="border-collapse:collapse; width:100%; font-size:13px;">
+          <thead><tr>
+            <th style="padding:8px 12px;text-align:left;border-bottom:1.5px solid var(--line);color:var(--muted);font-weight:600;">Növ</th>
+            <th style="padding:8px 12px;text-align:right;border-bottom:1.5px solid var(--line);color:var(--muted);font-weight:600;">Cəmi (kq)</th>
+            <th style="padding:8px 12px;text-align:right;border-bottom:1.5px solid var(--line);color:var(--muted);font-weight:600;">Artıq</th>
+            <th style="padding:8px 12px;text-align:right;border-bottom:1.5px solid var(--line);color:var(--muted);font-weight:600;">Əskik</th>
+          </tr></thead>
+          <tbody>
+            ${types.map((t) => {
+              const v = byType[t];
+              return `<tr>
+                <td style="padding:8px 12px;border-bottom:1px solid var(--line-soft);font-weight:600;color:var(--ink);">${esc(t)}</td>
+                <td style="padding:8px 12px;text-align:right;border-bottom:1px solid var(--line-soft);">${fmt(v.kg)}</td>
+                <td style="padding:8px 12px;text-align:right;border-bottom:1px solid var(--line-soft);color:var(--green);font-weight:700;">${v.artiq ? "+" + fmt(v.artiq) : "—"}</td>
+                <td style="padding:8px 12px;text-align:right;border-bottom:1px solid var(--line-soft);color:var(--red);font-weight:700;">${v.eskik ? "−" + fmt(v.eskik) : "—"}</td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>`;
+    }
+    const typeSummaryDay = buildTypeSummary(dayIntake);
+    const typeSummaryMonth = buildTypeSummary(monthIntake);
 
     return `
       <div class="section"><div class="section-title">Tarix</div>
@@ -1900,11 +1957,14 @@
                   <button class="del-btn" data-del-goods="${g.id}">${ICONS.trash}</button>
                 </div>
                 <div style="font-size:13px;margin-top:8px;line-height:1.7;">
-                  ${g.kgStated ? `Deyilən: <b>${fmt(g.kgStated)} kq</b><br/>` : ""}
-                  1-ci çəki: <b>${fmt(g.kg)} kq</b>
+                  ${
+                    g.kgStated
+                      ? `Deyilən: <b>${fmt(g.kgStated)} kq</b> → 1-ci çəki: <b>${fmt(g.kg)} kq</b> — <span style="font-weight:700;color:${g.kg - g.kgStated < 0 ? "var(--red)" : "var(--green)"};">${g.kg - g.kgStated > 0 ? "+" : ""}${fmt(g.kg - g.kgStated)} kq</span><br/>`
+                      : `1-ci çəki: <b>${fmt(g.kg)} kq</b>`
+                  }
                   ${
                     g.kg2
-                      ? `<br/>2-ci çəki: <b>${fmt(g.kg2)} kq</b>${g.kg2Time ? ` (${esc(g.kg2Time)})` : ""} — <span style="font-weight:700;color:${Math.abs(g.kg2 - g.kg) > 0.5 ? "var(--red)" : "var(--green)"};">fərq ${fmt(g.kg2 - g.kg)} kq</span>`
+                      ? `2-ci çəki: <b>${fmt(g.kg2)} kq</b>${g.kg2Time ? ` (${esc(g.kg2Time)})` : ""} — <span style="font-weight:700;color:${Math.abs(g.kg2 - g.kg) > 0.5 ? "var(--red)" : "var(--green)"};">fərq ${fmt(g.kg2 - g.kg)} kq</span>`
                       : ""
                   }
                 </div>
@@ -1921,6 +1981,11 @@
       </div>
 
       <div class="section">
+        <div class="section-title">${esc(date)} — növlər üzrə (cəmi / artıq / əskik)</div>
+        ${renderTypeSummaryTable(typeSummaryDay)}
+      </div>
+
+      <div class="section">
         <div class="section-title">${esc(date)} — bu gün nə qədər mal gətirdi</div>
         ${renderCarrierTable(byCarrier)}
       </div>
@@ -1928,6 +1993,11 @@
       <div class="section">
         <div class="section-title">Aylıq yekun</div>
         <div class="field-row"><div class="field"><input id="giMonth" type="month" value="${esc(month)}" /></div></div>
+        ${renderTypeSummaryTable(typeSummaryMonth)}
+      </div>
+
+      <div class="section">
+        <div class="section-title">Aylıq yekun — kim gətirdi</div>
         ${renderCarrierTable(byCarrierMonth)}
       </div>
     `;
@@ -2011,10 +2081,6 @@ Cəmi xərclər: ${fmt(r.totalExpenses)}
 
 🤝 Borclar (bu gün):
 ${r.debts.length ? r.debts.map((d) => `• ${d.person}: ${fmt(d.sum)} — ${d.direction === "gave" ? "bizə borcludur" : "biz borcluyuq"}`).join("\n") : "yeni qeyd yoxdur"}
-
-🚚 Maşın:
-${r.truckDay.length ? r.truckDay.map((t) => `• Sürücü: ${t.driver} — ${fmt(t.entries.reduce((s, e) => s + e.kg, 0))} kq, ${fmt(t.entries.reduce((s, e) => s + e.bags, 0))} kisə`).join("\n") : "göndərilməyib"}
-${r.truckDay.length ? `Cəmi göndərilib: ${fmt(r.truckTotalKg)} kq, ${fmt(r.truckTotalBags)} kisə` : ""}
 
 ⛽ Yanacaq:
 ${Object.keys(r.fuelByTractorist).length ? Object.entries(r.fuelByTractorist).map(([n, l]) => `• ${n}: ${fmt(l)} litr`).join("\n") : "qeyd yoxdur"}
@@ -2106,15 +2172,6 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     rows.push(["Borclar (bu gün)"]);
     rows.push(["Ad", "Məbləğ", "İstiqamət"]);
     r.debts.forEach((d) => rows.push([d.person, d.sum, d.direction === "gave" ? "Bizə borcludur" : "Biz borcluyuq"]));
-    rows.push([]);
-
-    rows.push(["Maşın"]);
-    rows.push(["Sürücü", "Kim apardı", "Kq", "Kisə"]);
-    r.truckDay.forEach((t) => {
-      t.entries.forEach((e) => {
-        rows.push([t.driver, e.supplier, e.kg, e.bags]);
-      });
-    });
     rows.push([]);
 
     rows.push(["Yanacaq"]);
