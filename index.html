@@ -273,10 +273,11 @@
     buyers: [],
     goodsIntake: [],
     warehouseOut: [],
+    warehouseOpening: [],
     workers: [],
     tractorists: [],
     fuelLog: [],
-    dataLoaded: { purchases: false, sales: false, expenses: false, debts: false, cashLog: false, attendance: false, truckLoads: false, drivers: false, driverAdvances: false, buyers: false, goodsIntake: false, warehouseOut: false, workers: false, tractorists: false, fuelLog: false },
+    dataLoaded: { purchases: false, sales: false, expenses: false, debts: false, cashLog: false, attendance: false, truckLoads: false, drivers: false, driverAdvances: false, buyers: false, goodsIntake: false, warehouseOut: false, warehouseOpening: false, workers: false, tractorists: false, fuelLog: false },
     // ephemeral form state per tab (kept simple, re-read from DOM on submit)
     reportDate: todayISO(),
     debtSearch: "",
@@ -393,6 +394,7 @@
     attachListener("buyers", "buyers");
     attachListener("goodsIntake", "goodsIntake");
     attachListener("warehouseOut", "warehouseOut");
+    attachListener("warehouseOpening", "warehouseOpening");
     attachListener("workers", "workers");
     attachListener("tractorists", "tractorists");
     attachListener("fuelLog", "fuelLog");
@@ -952,18 +954,35 @@
   async function deleteWarehouseOut(id) {
     await deleteDoc("warehouseOut", id);
   }
-  // Running warehouse stock per type — total ever brought in (Alışlar + Mal gətirmə) minus
-  // total ever sent out. Carries over automatically day to day, just like the kassa balance.
+  // Sets a fresh starting point for one type's stock, dated today — everything before this
+  // date is ignored for that type going forward, so old/messy test data doesn't count.
+  async function setWarehouseOpening(type, kg) {
+    await addDoc("warehouseOpening", { type, kg, date: todayISO(), ts: Date.now() });
+  }
+  // Running warehouse stock per type. If an opening balance was set for a type, only
+  // movements from that date onward count on top of it; otherwise the full history counts —
+  // carries over automatically day to day, just like the kassa balance.
   function buildWarehouseStock() {
+    const latestOpening = {};
+    sortByTs(state.warehouseOpening).forEach((o) => { latestOpening[o.type] = o; });
+
     const stock = {};
+    Object.values(latestOpening).forEach((o) => { stock[o.type] = o.kg; });
+
     state.purchases.forEach((p) => {
       const t = p.type || "Digər";
+      const opening = latestOpening[t];
+      if (opening && p.date < opening.date) return;
       stock[t] = (stock[t] || 0) + p.kg;
     });
     state.goodsIntake.forEach((g) => {
+      const opening = latestOpening[g.type];
+      if (opening && g.date < opening.date) return;
       stock[g.type] = (stock[g.type] || 0) + g.kg;
     });
     state.warehouseOut.forEach((w) => {
+      const opening = latestOpening[w.type];
+      if (opening && w.date < opening.date) return;
       stock[w.type] = (stock[w.type] || 0) - w.kg;
     });
     return stock;
@@ -1891,6 +1910,7 @@
   // ---------- Mal gətirmə (goods intake — independent of kassa) ----------
   let goodsType = GOODS_TYPES[0];
   let warehouseOutType = NUT_TYPES[0];
+  let warehouseOpeningType = NUT_TYPES[0];
   function renderGoodsTab() {
     const date = state.goodsDate;
     const carrierOptions = [...state.drivers.map((d) => d.name), ...state.buyers.map((b) => b.name)]
@@ -1962,7 +1982,17 @@
               `).join("")
           }
         </div>
-        <div class="time-note">Bu, indiyə qədər gələn (Alışlar + gətirilən mal) minus göndərilən mal — hər gün sıfırlanmır, kassa kimi davam edir.</div>
+        <div class="time-note">Bu, açılış qalığından (əgər təyin edilibsə) bəri gələn minus göndərilən mal — hər gün sıfırlanmır, kassa kimi davam edir.</div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Sklad qalığını bugünkü rəqəmə təyin et</div>
+        <div style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">Köhnə/qarışıq məlumatı nəzərə almadan, faktiki sayılan çəkini bugünkü tarixlə başlanğıc kimi qeyd et. Bundan sonrakı hesab yalnız bu tarixdən sonrakı hərəkətləri əlavə edəcək.</div>
+        <div class="toggle-row">
+          ${NUT_TYPES.map((t) => `<button class="toggle-btn ${warehouseOpeningType === t ? "active-ink" : ""}" data-wopen-type="${esc(t)}">${esc(t)}</button>`).join("")}
+        </div>
+        <div class="field-row"><div class="field"><label>Faktiki çəki (kq)</label><input id="wopenKg" type="number" inputmode="decimal" placeholder="0" /></div></div>
+        <button class="btn-outline" id="wopenSubmit">${ICONS.plus} Başlanğıc qalıq kimi təyin et</button>
       </div>
 
       <div class="section">
@@ -2717,6 +2747,17 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
       await addWarehouseOut({ date: state.goodsDate, aparan, type: warehouseOutType, kg });
       document.getElementById("woAparan").value = "";
       document.getElementById("woKg").value = "";
+    };
+
+    document.querySelectorAll("[data-wopen-type]").forEach((btn) => {
+      btn.onclick = () => { warehouseOpeningType = btn.dataset.wopenType; renderTabContent(); };
+    });
+    document.getElementById("wopenSubmit").onclick = async () => {
+      const kg = Number(document.getElementById("wopenKg").value);
+      if (!kg && kg !== 0) return;
+      if (!confirm(`${warehouseOpeningType} üçün başlanğıc qalıq ${fmt(kg)} kq olaraq təyin edilsin? Bu tarixdən əvvəlki hərəkətlər artıq hesaba qatılmayacaq.`)) return;
+      await setWarehouseOpening(warehouseOpeningType, kg);
+      document.getElementById("wopenKg").value = "";
     };
     document.querySelectorAll("[data-del-wo]").forEach((btn) => {
       btn.onclick = () => deleteWarehouseOut(btn.dataset.delWo);
