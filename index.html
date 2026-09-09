@@ -272,10 +272,11 @@
     driverAdvances: [],
     buyers: [],
     goodsIntake: [],
+    warehouseOut: [],
     workers: [],
     tractorists: [],
     fuelLog: [],
-    dataLoaded: { purchases: false, sales: false, expenses: false, debts: false, cashLog: false, attendance: false, truckLoads: false, drivers: false, driverAdvances: false, buyers: false, goodsIntake: false, workers: false, tractorists: false, fuelLog: false },
+    dataLoaded: { purchases: false, sales: false, expenses: false, debts: false, cashLog: false, attendance: false, truckLoads: false, drivers: false, driverAdvances: false, buyers: false, goodsIntake: false, warehouseOut: false, workers: false, tractorists: false, fuelLog: false },
     // ephemeral form state per tab (kept simple, re-read from DOM on submit)
     reportDate: todayISO(),
     debtSearch: "",
@@ -391,6 +392,7 @@
     attachListener("driverAdvances", "driverAdvances");
     attachListener("buyers", "buyers");
     attachListener("goodsIntake", "goodsIntake");
+    attachListener("warehouseOut", "warehouseOut");
     attachListener("workers", "workers");
     attachListener("tractorists", "tractorists");
     attachListener("fuelLog", "fuelLog");
@@ -940,6 +942,31 @@
   }
   async function deleteGoodsIntake(id) {
     await deleteDoc("goodsIntake", id);
+  }
+  // Goods leaving the warehouse (loaded onto a truck) — automatically subtracted from the
+  // running warehouse stock, same way a purchase/intake adds to it. No cash effect.
+  async function addWarehouseOut(w) {
+    const date = w.date || todayISO();
+    await addDoc("warehouseOut", { date, time: nowTime(), ...w, ts: Date.now() });
+  }
+  async function deleteWarehouseOut(id) {
+    await deleteDoc("warehouseOut", id);
+  }
+  // Running warehouse stock per type — total ever brought in (Alışlar + Mal gətirmə) minus
+  // total ever sent out. Carries over automatically day to day, just like the kassa balance.
+  function buildWarehouseStock() {
+    const stock = {};
+    state.purchases.forEach((p) => {
+      const t = p.type || "Digər";
+      stock[t] = (stock[t] || 0) + p.kg;
+    });
+    state.goodsIntake.forEach((g) => {
+      stock[g.type] = (stock[g.type] || 0) + g.kg;
+    });
+    state.warehouseOut.forEach((w) => {
+      stock[w.type] = (stock[w.type] || 0) - w.kg;
+    });
+    return stock;
   }
   // Fills in the second weighing on an existing record — used when the truck arrives later
   // and the same load is weighed again, so the two weighings stay tied to one entry.
@@ -1863,6 +1890,7 @@
 
   // ---------- Mal gətirmə (goods intake — independent of kassa) ----------
   let goodsType = GOODS_TYPES[0];
+  let warehouseOutType = NUT_TYPES[0];
   function renderGoodsTab() {
     const date = state.goodsDate;
     const carrierOptions = [...state.drivers.map((d) => d.name), ...state.buyers.map((b) => b.name)]
@@ -1914,9 +1942,27 @@
       return { type: t, alislarKg, goodsKg, total: alislarKg + goodsKg };
     });
 
+    const stock = buildWarehouseStock();
+    const stockTypes = [...NUT_TYPES, ...Object.keys(stock).filter((t) => !NUT_TYPES.includes(t))].filter((t) => stock[t] !== undefined);
+    const dayOut = state.warehouseOut.filter((w) => w.date === date);
+
     return `
       <div class="section"><div class="section-title">Tarix</div>
         <div class="field-row"><div class="field"><input id="goodsDate" type="date" value="${esc(date)}" /></div></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Skladda qalıq (indiki)</div>
+        <div class="stat-row">
+          ${
+            stockTypes.length === 0
+              ? '<div class="empty">Hələ məlumat yoxdur</div>'
+              : stockTypes.map((t) => `
+                <div class="stat-card"><div class="stat-label">${esc(t)}</div><div class="stat-value">${fmt(stock[t])} kg</div></div>
+              `).join("")
+          }
+        </div>
+        <div class="time-note">Bu, indiyə qədər gələn (Alışlar + gətirilən mal) minus göndərilən mal — hər gün sıfırlanmır, kassa kimi davam edir.</div>
       </div>
 
       <div class="section">
@@ -1980,6 +2026,47 @@
         <div class="field-row"><div class="field"><label>Çəki (kq)</label><input id="giKg" type="number" inputmode="decimal" placeholder="0" /></div></div>
         <div class="field-row"><div class="field"><label>Gətirən</label><input id="giCarrier" list="carrierNamesList" placeholder="Sürücü və ya alıcı adı" /></div></div>
         <button class="btn" id="giSubmit">${ICONS.plus} Qeyd et</button>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Maşına mal göndərmə (skladdan çıxır)</div>
+        <div style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">Maşını doldurarkən götürülən malı qeyd et — "Skladda qalıq" avtomatik azalacaq.</div>
+        <div class="field-row"><div class="field"><label>Aparan</label><input id="woAparan" list="carrierNamesList" placeholder="Sürücünün adı" /></div></div>
+        <div class="toggle-row">
+          ${NUT_TYPES.map((t) => `<button class="toggle-btn ${warehouseOutType === t ? "active-ink" : ""}" data-wo-type="${esc(t)}">${esc(t)}</button>`).join("")}
+        </div>
+        <div class="field-row"><div class="field"><label>Kq</label><input id="woKg" type="number" inputmode="decimal" placeholder="0" /></div></div>
+        <button class="btn red" id="woSubmit">${ICONS.plus} Göndərməni qeyd et</button>
+      </div>
+
+      <div class="section">
+        <div class="section-title">${esc(date)} — bu gün göndərilən (${dayOut.length})</div>
+        ${
+          dayOut.length === 0
+            ? '<div class="empty">Bu tarixdə göndərilməyib</div>'
+            : `<div style="overflow-x:auto; border:1px solid var(--line-soft); border-radius:10px;">
+                <table style="border-collapse:collapse; width:100%; font-size:12.5px;">
+                  <thead><tr>
+                    <th style="padding:7px 10px;text-align:left;border-bottom:1.5px solid var(--line);color:var(--muted);font-weight:600;">Aparan</th>
+                    <th style="padding:7px 10px;text-align:left;border-bottom:1.5px solid var(--line);color:var(--muted);font-weight:600;">Növ</th>
+                    <th style="padding:7px 10px;text-align:right;border-bottom:1.5px solid var(--line);color:var(--muted);font-weight:600;">Kq</th>
+                    <th style="padding:7px 10px;text-align:right;border-bottom:1.5px solid var(--line);color:var(--muted);font-weight:600;">Vaxt</th>
+                    <th style="padding:7px 10px;border-bottom:1.5px solid var(--line);"></th>
+                  </tr></thead>
+                  <tbody>
+                    ${sortByTs(dayOut).reverse().map((w) => `
+                      <tr>
+                        <td style="padding:7px 10px;border-bottom:1px solid var(--line-soft);font-weight:600;color:var(--ink);">${esc(w.aparan)}</td>
+                        <td style="padding:7px 10px;border-bottom:1px solid var(--line-soft);">${esc(w.type)}</td>
+                        <td style="padding:7px 10px;text-align:right;border-bottom:1px solid var(--line-soft);color:var(--red);font-weight:700;">−${fmt(w.kg)}</td>
+                        <td style="padding:7px 10px;text-align:right;border-bottom:1px solid var(--line-soft);color:var(--muted);">${esc(w.time || "")}</td>
+                        <td style="padding:7px 10px;text-align:right;border-bottom:1px solid var(--line-soft);"><button class="del-btn" data-del-wo="${w.id}">${ICONS.trash}</button></td>
+                      </tr>
+                    `).join("")}
+                  </tbody>
+                </table>
+              </div>`
+        }
       </div>
 
       <div class="section">
@@ -2619,6 +2706,21 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     document.querySelectorAll("[data-goods-filter-type]").forEach((btn) => {
       btn.onclick = () => { state.goodsTypeFilter = btn.dataset.goodsFilterType; renderTabContent(); };
     });
+
+    document.querySelectorAll("[data-wo-type]").forEach((btn) => {
+      btn.onclick = () => { warehouseOutType = btn.dataset.woType; renderTabContent(); };
+    });
+    document.getElementById("woSubmit").onclick = async () => {
+      const kg = Number(document.getElementById("woKg").value);
+      const aparan = document.getElementById("woAparan").value.trim();
+      if (!kg || !aparan) return;
+      await addWarehouseOut({ date: state.goodsDate, aparan, type: warehouseOutType, kg });
+      document.getElementById("woAparan").value = "";
+      document.getElementById("woKg").value = "";
+    };
+    document.querySelectorAll("[data-del-wo]").forEach((btn) => {
+      btn.onclick = () => deleteWarehouseOut(btn.dataset.delWo);
+    });
   }
 
   function wireReport() {
@@ -2656,6 +2758,27 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
   }
 
   // ---------- Boot ----------
+  // If the site stays open across midnight, every "today"-anchored date field (Alışlar,
+  // Satışlar, Kassa, etc.) would otherwise stay stuck on yesterday until a manual refresh.
+  // This watches the real calendar day and rolls those fields forward automatically —
+  // but only the ones still pointing at "today", so a date you deliberately browsed back
+  // to isn't touched. Cumulative totals (like Skladda qalıq) aren't date-filtered at all,
+  // so they're unaffected either way.
+  let lastKnownDay = todayISO();
+  const TODAY_ANCHORED_DATE_FIELDS = [
+    "purchasesDate", "salesDate", "expenseDate", "debtsDate",
+    "driversDate", "goodsDate", "truckDate", "kassaDate",
+  ];
+  setInterval(() => {
+    const nowDay = todayISO();
+    if (nowDay === lastKnownDay) return;
+    TODAY_ANCHORED_DATE_FIELDS.forEach((field) => {
+      if (state[field] === lastKnownDay) state[field] = nowDay;
+    });
+    lastKnownDay = nowDay;
+    renderTabContent();
+  }, 60 * 1000);
+
   // Prevent the browser's default behaviour of nudging a focused number input up/down
   // when the mouse wheel scrolls over it — this was silently corrupting typed amounts
   // (e.g. typing 135 while the page scrolls a notch could leave 133 or 134 instead).
