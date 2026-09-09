@@ -213,11 +213,16 @@
     debt_gave: "Borc verilib",
     debt_took: "Borc alınıb",
     debt_repay: "Borc qaytarılması",
-    manual: "Əl ilə əlavə/çıxarış",
+    manual: "Əl ilə çıxarılan məbləğ",
     driver_advance: "Sürücüyə avans",
     driver_settle: "Sürücü hesabı",
     adjustment: "Düzəliş",
   };
+  // "manual" needs a different label depending on direction — money going in vs going out.
+  function cashSourceLabel(src, direction) {
+    if (src === "manual" && direction === "in") return "Kassaya daxil olan məbləğ";
+    return CASH_SOURCE_LABELS[src] || src;
+  }
   function buildCashBreakdown(entries) {
     const byIn = {};
     const byOut = {};
@@ -285,6 +290,7 @@
     goodsDate: todayISO(),
     kassaDate: todayISO(),
     purchasesDate: todayISO(),
+    purchasesTypeFilter: "all",
     salesDate: todayISO(),
     debtsDate: todayISO(),
     fuelMonth: todayISO().slice(0, 7),
@@ -352,7 +358,7 @@
     { id: "attendance", label: "Davamiyyət", icon: "calendar", ownerOnly: true },
     { id: "truck", label: "Nəqliyyat", icon: "truck", ownerOnly: true },
     { id: "drivers", label: "Sürücülər", icon: "driver", ownerOnly: true },
-    { id: "goods", label: "Mal gətirmə", icon: "scale", ownerOnly: true },
+    { id: "goods", label: "Skladda olan məhsullar", icon: "scale", ownerOnly: true },
   ];
 
   // ---------- Firestore live sync ----------
@@ -939,6 +945,36 @@
   async function addSecondWeighing(id, kg2) {
     await updateDoc("goodsIntake", id, { kg2, kg2Time: nowTime() });
   }
+  // "Pul verildi" is a warehouse-side bookkeeping flag only — whether we've settled with
+  // whoever brought this batch. It never touches the kassa (that's handled separately by
+  // Alışlar/Borclar); it's purely for tracking stock accountability.
+  async function toggleGoodsPaid(id) {
+    const g = state.goodsIntake.find((x) => x.id === id);
+    if (!g) return;
+    await updateDoc("goodsIntake", id, { warehousePaid: !g.warehousePaid });
+  }
+  async function togglePurchaseWarehousePaid(id) {
+    const p = state.purchases.find((x) => x.id === id);
+    if (!p) return;
+    await updateDoc("purchases", id, { warehousePaid: !p.warehousePaid });
+  }
+  // Combines goods brought in directly (Mal gətirmə records) with Alışlar purchases into
+  // one warehouse-stock view — both represent goods that entered the warehouse.
+  function buildWarehouseEntries(matchFn) {
+    const fromGoods = state.goodsIntake.filter(matchFn).map((g) => ({
+      id: g.id, source: "goods", date: g.date, time: g.time, ts: g.ts,
+      gətirən: g.gətirən, kimdenAlib: g.kimdenAlib || "", type: g.type,
+      kgStated: g.kgStated || 0, kg: g.kg, kg2: g.kg2 || 0, kg2Time: g.kg2Time || "",
+      paid: !!g.warehousePaid,
+    }));
+    const fromPurchases = state.purchases.filter(matchFn).map((p) => ({
+      id: p.id, source: "purchase", date: p.date, time: p.time, ts: p.ts,
+      gətirən: p.supplier, kimdenAlib: "", type: p.type,
+      kgStated: 0, kg: p.kg, kg2: 0, kg2Time: "",
+      paid: !!p.warehousePaid,
+    }));
+    return [...fromGoods, ...fromPurchases];
+  }
 
   // Builds a chronological ledger for one person's debts: every entry plus the running
   // balance after it, so "gave 500, got back 200" reads as a clear timeline ending at 300.
@@ -1129,13 +1165,13 @@
       <div class="section">
         <div class="section-title">Mədaxil haradan</div>
         ${Object.entries(breakdown.in).length === 0 ? '<div class="empty">Hələlik boşdur</div>' : Object.entries(breakdown.in).map(([src, sum]) => `
-          <div class="list-row"><div class="title">${esc(CASH_SOURCE_LABELS[src] || src)}</div><div class="right green">+${fmt(sum)}</div></div>
+          <div class="list-row"><div class="title">${esc(cashSourceLabel(src, "in"))}</div><div class="right green">+${fmt(sum)}</div></div>
         `).join("")}
       </div>
       <div class="section">
         <div class="section-title">Çıxan haraya</div>
         ${Object.entries(breakdown.out).length === 0 ? '<div class="empty">Hələlik boşdur</div>' : Object.entries(breakdown.out).map(([src, sum]) => `
-          <div class="list-row"><div class="title">${esc(CASH_SOURCE_LABELS[src] || src)}</div><div class="right red">−${fmt(sum)}</div></div>
+          <div class="list-row"><div class="title">${esc(cashSourceLabel(src, "out"))}</div><div class="right red">−${fmt(sum)}</div></div>
         `).join("")}
         ${dayDriverAdvance > 0 ? `<div class="list-row" style="opacity:0.75;"><div class="title">Sürücülərə avans verilib</div><div class="right" style="color:var(--muted);">−${fmt(dayDriverAdvance)}</div></div>` : ""}
       </div>
@@ -1192,6 +1228,7 @@
     });
     const typeOrder = [...NUT_TYPES, ...Object.keys(byType).filter((t) => !NUT_TYPES.includes(t))];
     const typeRows = typeOrder.filter((t) => byType[t]);
+    const filteredDayPurchases = state.purchasesTypeFilter === "all" ? dayPurchases : dayPurchases.filter((p) => (p.type || "Digər") === state.purchasesTypeFilter);
 
     return `
       <div class="section"><div class="section-title">Tarix</div>
@@ -1256,11 +1293,15 @@
         <button class="btn" id="pSubmit">${ICONS.plus} Alışı qeyd et</button>
       </div>
       <div class="section">
-        <div class="section-title">${esc(date)} tarixindəki qeydlər (${dayPurchases.length})</div>
+        <div class="section-title">${esc(date)} tarixindəki qeydlər (${filteredDayPurchases.length})</div>
+        <div class="toggle-row">
+          <button class="toggle-btn ${state.purchasesTypeFilter === "all" ? "active-ink" : ""}" data-filter-type="all">Hamısı</button>
+          ${NUT_TYPES.map((t) => `<button class="toggle-btn ${state.purchasesTypeFilter === t ? "active-ink" : ""}" data-filter-type="${esc(t)}">${esc(t)}</button>`).join("")}
+        </div>
         ${
-          dayPurchases.length === 0
+          filteredDayPurchases.length === 0
             ? '<div class="empty">Bu tarixdə qeyd yoxdur</div>'
-            : sortByTs(dayPurchases).reverse().map((p) => `
+            : sortByTs(filteredDayPurchases).reverse().map((p) => `
               <div class="list-row">
                 <div>
                   <div class="title">${esc(p.supplier)} — ${fmt(p.kg)} kq · ${esc(p.type || "")}</div>
@@ -1460,17 +1501,6 @@
         <button class="btn ${debtDirection === "gave" ? "green" : "red"}" id="dSubmit">${ICONS.plus} Borcu qeyd et</button>
         <div class="time-note">"Bütün borclar" bölməsində seçilmiş tarixə (${esc(state.debtsDate)}) qeyd olunacaq. Qismən qaytarma üçün: eyni adla "Borc aldım" seçib qaytarılan məbləği yaz — qalıq özü hesablanacaq.</div>
       </div>
-      ${
-        debtors.length
-          ? `<div class="section"><div class="section-title">Kimin borcu var</div>
-          ${debtors.map(([name, net]) => `
-            <div class="list-row">
-              <div class="title">${esc(name)}</div>
-              <div class="right ${net > 0 ? "green" : net < 0 ? "red" : ""}" style="${net === 0 ? "color:var(--muted);" : ""}">${net > 0 ? "+" : ""}${fmt(net)}</div>
-            </div>`).join("")}
-          </div>`
-          : ""
-      }
       <div class="section">
         <div class="section-title">Bütün borclar (${filtered.length})</div>
         <div class="field-row"><div class="field"><input id="debtsDate" type="date" value="${esc(state.debtsDate)}" /></div></div>
@@ -1491,6 +1521,19 @@
               </div>`).join("")
         }
       </div>
+      ${
+        debtors.length
+          ? `<div class="section"><div class="section-title">Kimin borcu var (bütün vaxt)</div>
+          <div class="history-scroll">
+            ${debtors.map(([name, net]) => `
+              <div class="list-row">
+                <div class="title">${esc(name)}</div>
+                <div class="right ${net > 0 ? "green" : net < 0 ? "red" : ""}" style="${net === 0 ? "color:var(--muted);" : ""}">${net > 0 ? "+" : ""}${fmt(net)}</div>
+              </div>`).join("")}
+          </div>
+          </div>`
+          : ""
+      }
     `;
   }
 
@@ -1824,10 +1867,11 @@
     const carrierOptions = [...state.drivers.map((d) => d.name), ...state.buyers.map((b) => b.name)]
       .map((n) => `<option value="${esc(n)}"></option>`).join("");
 
-    // Daily goods-intake summary, grouped by who brought it, then by type
-    const dayIntake = state.goodsIntake.filter((g) => g.date === date);
+    // Warehouse stock = goods brought in directly + everything bought via Alışlar — both
+    // represent goods sitting in the warehouse, tracked here independently of the kassa.
+    const dayEntries = buildWarehouseEntries((x) => x.date === date);
     const byCarrier = {};
-    dayIntake.forEach((g) => {
+    dayEntries.forEach((g) => {
       if (!byCarrier[g.gətirən]) byCarrier[g.gətirən] = {};
       if (!byCarrier[g.gətirən][g.type]) byCarrier[g.gətirən][g.type] = { kgStated: 0, kg: 0, kg2: 0 };
       byCarrier[g.gətirən][g.type].kgStated += g.kgStated || 0;
@@ -1835,11 +1879,10 @@
       byCarrier[g.gətirən][g.type].kg2 += g.kg2 || 0;
     });
 
-    // Monthly goods-intake summary, same grouping, for month-end totals
     const month = state.goodsIntakeMonth;
-    const monthIntake = state.goodsIntake.filter((g) => g.date.startsWith(month));
+    const monthEntries = buildWarehouseEntries((x) => x.date.startsWith(month));
     const byCarrierMonth = {};
-    monthIntake.forEach((g) => {
+    monthEntries.forEach((g) => {
       if (!byCarrierMonth[g.gətirən]) byCarrierMonth[g.gətirən] = {};
       if (!byCarrierMonth[g.gətirən][g.type]) byCarrierMonth[g.gətirən][g.type] = { kgStated: 0, kg: 0, kg2: 0 };
       byCarrierMonth[g.gətirən][g.type].kgStated += g.kgStated || 0;
@@ -1863,13 +1906,13 @@
             <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-top:1px solid var(--line-soft);">
               <div>${esc(type)}${diff !== null ? `<br/><span style="font-weight:700;color:${diff < 0 ? "var(--red)" : diff > 0 ? "var(--green)" : "var(--muted)"};">${diff > 0 ? "+" : ""}${fmt(diff)} kq</span>` : ""}</div>
               <div style="font-weight:600;text-align:right;">
-                ${v.kgStated ? `<span style="font-weight:500;color:var(--muted);">Deyilən: ${fmt(v.kgStated)} kq</span><br/>` : ""}1-ci: ${fmt(v.kg)} kq${v.kg2 ? `<br/><span style="font-weight:500;color:var(--muted);">2-ci: ${fmt(v.kg2)} kq (fərq ${fmt(v.kg2 - v.kg)})</span>` : ""}
+                ${v.kgStated ? `<span style="font-weight:500;color:var(--muted);">Deyilən: ${fmt(v.kgStated)} kq</span><br/>` : ""}Kq: ${fmt(v.kg)}${v.kg2 ? `<br/><span style="font-weight:500;color:var(--muted);">2-ci: ${fmt(v.kg2)} kq (fərq ${fmt(v.kg2 - v.kg)})</span>` : ""}
               </div>
             </div>
           `;
           }).join("")}
           <div style="margin-top:6px;padding-top:6px;border-top:1.5px solid var(--line);font-size:13px;font-weight:700;color:var(--ink);">
-            ${totalKgStated ? `Cəmi (deyilən): ${fmt(totalKgStated)} kq · ` : ""}Cəmi (1-ci): ${fmt(totalKg)} kq${totalKg2 ? ` · Cəmi (2-ci): ${fmt(totalKg2)} kq` : ""}
+            ${totalKgStated ? `Cəmi (deyilən): ${fmt(totalKgStated)} kq · ` : ""}Cəmi (kq): ${fmt(totalKg)}${totalKg2 ? ` · Cəmi (2-ci): ${fmt(totalKg2)} kq` : ""}
           </div>
         </div>`;
       }).join("");
@@ -1915,8 +1958,8 @@
         </table>
       </div>`;
     }
-    const typeSummaryDay = buildTypeSummary(dayIntake);
-    const typeSummaryMonth = buildTypeSummary(monthIntake);
+    const typeSummaryDay = buildTypeSummary(dayEntries);
+    const typeSummaryMonth = buildTypeSummary(monthEntries);
 
     return `
       <div class="section"><div class="section-title">Tarix</div>
@@ -1942,8 +1985,8 @@
       <datalist id="carrierNamesList">${carrierOptions}</datalist>
 
       <div class="section">
-        <div class="section-title">Mal gətirmə (kassaya təsir etmir)</div>
-        <div style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">Sürücü və ya alıcı gətirdiyi malı qeyd et — pulla əlaqəsi yoxdur, sadəcə çəki uçotu üçündür.</div>
+        <div class="section-title">Sürücü/alıcı gətirdiyi mal (kassaya təsir etmir)</div>
+        <div style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">Sürücü və ya alıcı gətirdiyi malı qeyd et — pulla əlaqəsi yoxdur, sadəcə anbar uçotu üçündür. Alışlar bölməsindən əlavə etdiyin alışlar da avtomatik bu anbar uçotuna düşür.</div>
         <div class="field-row"><div class="field"><label>Kimdən alıb</label><input id="giFrom" placeholder="Satıcının adı" /></div></div>
         <div class="toggle-row">
           ${GOODS_TYPES.map((t) => `<button class="toggle-btn ${goodsType === t ? "active-ink" : ""}" data-goods-type="${esc(t)}">${esc(t)}</button>`).join("")}
@@ -1951,29 +1994,29 @@
         <div class="field-row"><div class="field"><label>Deyilən çəki (kq, məcburi deyil)</label><input id="giKgStated" type="number" inputmode="decimal" placeholder="0" /></div></div>
         <div class="field-row"><div class="field"><label>1-ci çəkidən sonra (kq)</label><input id="giKg" type="number" inputmode="decimal" placeholder="0" /></div></div>
         <div class="field-row"><div class="field"><label>Gətirən</label><input id="giCarrier" list="carrierNamesList" placeholder="Sürücü və ya alıcı adı" /></div></div>
-        <button class="btn" id="giSubmit">${ICONS.plus} Mal gətirməsini qeyd et</button>
+        <button class="btn" id="giSubmit">${ICONS.plus} Qeyd et</button>
         <div class="time-note">Maşın gələndə 2-ci çəkini aşağıdakı "Qeydlər" siyahısından həmin qeydə əlavə edə bilərsən.</div>
       </div>
 
       <div class="section">
-        <div class="section-title">${esc(date)} — qeydlər (${dayIntake.length})</div>
+        <div class="section-title">${esc(date)} — anbar qeydləri (${dayEntries.length})</div>
         ${
-          dayIntake.length === 0
+          dayEntries.length === 0
             ? '<div class="empty">Bu tarixdə qeyd yoxdur</div>'
-            : sortByTs(dayIntake).reverse().map((g) => `
+            : sortByTs(dayEntries).reverse().map((g) => `
               <div class="card-box">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;">
                   <div>
-                    <div style="font-weight:700;color:var(--ink);">${esc(g.gətirən)} · ${esc(g.type)}</div>
+                    <div style="font-weight:700;color:var(--ink);">${esc(g.gətirən)} · ${esc(g.type)}${g.source === "purchase" ? ' <span style="font-weight:500;color:var(--muted);">(Alışlar)</span>' : ""}</div>
                     <div style="font-size:12px;color:var(--muted);margin-top:2px;">${esc(g.date)}${g.time ? " · " + esc(g.time) : ""}${g.kimdenAlib ? " · " + esc(g.kimdenAlib) + "dan" : ""}</div>
                   </div>
-                  <button class="del-btn" data-del-goods="${g.id}">${ICONS.trash}</button>
+                  ${g.source === "goods" ? `<button class="del-btn" data-del-goods="${g.id}">${ICONS.trash}</button>` : ""}
                 </div>
                 <div style="font-size:13px;margin-top:8px;line-height:1.7;">
                   ${
                     g.kgStated
                       ? `Deyilən: <b>${fmt(g.kgStated)} kq</b> → 1-ci çəki: <b>${fmt(g.kg)} kq</b> — <span style="font-weight:700;color:${g.kg - g.kgStated < 0 ? "var(--red)" : "var(--green)"};">${g.kg - g.kgStated > 0 ? "+" : ""}${fmt(g.kg - g.kgStated)} kq</span><br/>`
-                      : `1-ci çəki: <b>${fmt(g.kg)} kq</b>`
+                      : `Kq: <b>${fmt(g.kg)} kq</b>`
                   }
                   ${
                     g.kg2
@@ -1982,35 +2025,28 @@
                   }
                 </div>
                 ${
-                  !g.kg2
+                  g.source === "goods" && !g.kg2
                     ? `<div class="field-row" style="margin-top:10px;">
                         <div class="field"><input class="secondWeighInput" type="number" inputmode="decimal" placeholder="2-ci çəkidən sonra (kq)" /></div>
                         <button class="btn-outline" style="width:auto;padding:9px 16px;flex-shrink:0;" data-add-kg2="${g.id}">Əlavə et</button>
                       </div>`
                     : ""
                 }
+                <div style="margin-top:10px;">
+                  <button class="btn-outline ${g.paid ? "" : ""}" style="width:auto;padding:7px 14px;font-size:12.5px;${g.paid ? "border-color:var(--green);color:var(--green);background:var(--green-bg);" : ""}" data-toggle-paid="${g.id}" data-toggle-paid-source="${g.source}">${g.paid ? "✓ Pul verildi" : "Pul verilmədi"}</button>
+                </div>
               </div>`).join("")
         }
       </div>
 
       <div class="section">
-        <div class="section-title">${esc(date)} — növlər üzrə (cəmi / artıq / əskik)</div>
-        ${renderTypeSummaryTable(typeSummaryDay)}
-      </div>
-
-      <div class="section">
-        <div class="section-title">${esc(date)} — bu gün nə qədər mal gətirdi</div>
+        <div class="section-title">${esc(date)} — kim nə qədər gətirdi</div>
         ${renderCarrierTable(byCarrier)}
       </div>
 
       <div class="section">
         <div class="section-title">Aylıq yekun</div>
         <div class="field-row"><div class="field"><input id="giMonth" type="month" value="${esc(month)}" /></div></div>
-        ${renderTypeSummaryTable(typeSummaryMonth)}
-      </div>
-
-      <div class="section">
-        <div class="section-title">Aylıq yekun — kim gətirdi</div>
         ${renderCarrierTable(byCarrierMonth)}
       </div>
     `;
@@ -2066,6 +2102,25 @@
     });
     const purchaseAvg = r.totalKg ? r.totalPurchaseSum / r.totalKg : 0;
 
+    const kassaBlock = `💵 Kassa:
+Mədaxil: +${fmt(r.cashIn)}${Object.entries(r.cashBreakdown.in).map(([src, sum]) => `\n  · ${cashSourceLabel(src, "in")}: +${fmt(sum)}`).join("")}
+Kassadan çıxan: −${fmt(r.cashOut)}${Object.entries(r.cashBreakdown.out).map(([src, sum]) => `\n  · ${cashSourceLabel(src, "out")}: −${fmt(sum)}`).join("")}
+Kassada qalıq (bu gün üçün): ${fmt(r.dayBalance)}`;
+
+    if (!isOwner()) {
+      // Read-only viewers only see the essentials: purchases, driver advances, and kassa.
+      return `📋 ${reportDate} hesabatı
+
+🌰 Fındıq alışı:
+${purchaseTypeLines.length ? purchaseTypeLines.join("\n") : "qeyd yoxdur"}
+Cəmi: ${fmt(r.totalKg)} kq, məbləğ ${fmt(r.totalPurchaseSum)}${r.totalKg ? ` (orta ${fmt(purchaseAvg)}/kq)` : ""}
+
+🚗 Sürücülər (avans):
+${r.driverSummaries.length ? r.driverSummaries.map((d) => `• ${d.driver}: avans ${fmt(d.advance)}`).join("\n") : "qeyd yoxdur"}
+
+${kassaBlock}`;
+    }
+
     return `📋 ${reportDate} hesabatı
 
 👷 Davamiyyət: ${r.attendanceDay.length} nəfər işdə olub
@@ -2080,13 +2135,10 @@ Cəmi: ${fmt(r.totalSalesKg)} kq, məbləğ ${fmt(r.totalSalesSum)}
 🚗 Sürücülər (avans):
 ${r.driverSummaries.length ? r.driverSummaries.map((d) => `• ${d.driver}: avans ${fmt(d.advance)}`).join("\n") : "qeyd yoxdur"}
 
-📦 Mal gətirmə:
+📦 Anbar (Skladda olan məhsullar):
 ${r.goodsIntakeDay.length ? r.goodsIntakeDay.map((g) => `• ${g.gətirən}: ${g.kgStated ? `deyilən ${fmt(g.kgStated)} kq → ` : ""}${fmt(g.kg)} kq${g.kg2 ? ` → 2-ci çəki ${fmt(g.kg2)} kq (fərq ${fmt(g.kg2 - g.kg)})` : ""} [${g.type}]${g.kimdenAlib ? ` (${g.kimdenAlib}dan)` : ""}`).join("\n") : "qeyd yoxdur"}
 
-💵 Kassa:
-Mədaxil: +${fmt(r.cashIn)}${Object.entries(r.cashBreakdown.in).map(([src, sum]) => `\n  · ${CASH_SOURCE_LABELS[src] || src}: +${fmt(sum)}`).join("")}
-Kassadan çıxan: −${fmt(r.cashOut)}${Object.entries(r.cashBreakdown.out).map(([src, sum]) => `\n  · ${CASH_SOURCE_LABELS[src] || src}: −${fmt(sum)}`).join("")}
-Kassada qalıq (bu gün üçün): ${fmt(r.dayBalance)}
+${kassaBlock}
 
 🧾 Xərclər:
 ${r.expenses.length ? r.expenses.map((e) => `• ${e.category}: ${fmt(e.sum)}${e.note ? " (" + e.note + ")" : ""}`).join("\n") : "qeyd yoxdur"}
@@ -2326,6 +2378,9 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     document.getElementById("purchasesDate").onchange = (e) => { state.purchasesDate = e.target.value; renderTabContent(); };
     document.querySelectorAll("[data-nut-type]").forEach((btn) => {
       btn.onclick = () => { purchaseType = btn.dataset.nutType; renderTabContent(); };
+    });
+    document.querySelectorAll("[data-filter-type]").forEach((btn) => {
+      btn.onclick = () => { state.purchasesTypeFilter = btn.dataset.filterType; renderTabContent(); };
     });
     function updateAvg() {
       const kg = Number(document.getElementById("pKg").value) || 0;
@@ -2597,6 +2652,14 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
         const kg2 = Number(input.value);
         if (!kg2) return;
         await addSecondWeighing(btn.dataset.addKg2, kg2);
+      };
+    });
+    document.querySelectorAll("[data-toggle-paid]").forEach((btn) => {
+      btn.onclick = () => {
+        const id = btn.dataset.togglePaid;
+        const source = btn.dataset.togglePaidSource;
+        if (source === "goods") toggleGoodsPaid(id);
+        else togglePurchaseWarehousePaid(id);
       };
     });
     document.getElementById("giMonth").onchange = (e) => { state.goodsIntakeMonth = e.target.value; renderTabContent(); };
