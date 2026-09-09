@@ -288,6 +288,7 @@
     driversDate: todayISO(),
     goodsIntakeMonth: todayISO().slice(0, 7),
     goodsDate: todayISO(),
+    goodsTypeFilter: "all",
     kassaDate: todayISO(),
     purchasesDate: todayISO(),
     purchasesTypeFilter: "all",
@@ -1870,6 +1871,7 @@
     // Warehouse stock = goods brought in directly + everything bought via Alışlar — both
     // represent goods sitting in the warehouse, tracked here independently of the kassa.
     const dayEntries = buildWarehouseEntries((x) => x.date === date);
+    const filteredDayEntries = state.goodsTypeFilter === "all" ? dayEntries : dayEntries.filter((g) => g.type === state.goodsTypeFilter);
     const byCarrier = {};
     dayEntries.forEach((g) => {
       if (!byCarrier[g.gətirən]) byCarrier[g.gətirən] = {};
@@ -1978,13 +1980,18 @@
         <div class="field-row"><div class="field"><label>Çəki (kq)</label><input id="giKg" type="number" inputmode="decimal" placeholder="0" /></div></div>
         <div class="field-row"><div class="field"><label>Gətirən</label><input id="giCarrier" list="carrierNamesList" placeholder="Sürücü və ya alıcı adı" /></div></div>
         <button class="btn" id="giSubmit">${ICONS.plus} Qeyd et</button>
-        <div class="time-note">Maşın gələndə 2-ci çəkini aşağıdakı cədvəldən həmin qeydə əlavə edə bilərsən.</div>
       </div>
 
       <div class="section">
-        <div class="section-title">${esc(date)} — anbar qeydləri (${dayEntries.length})</div>
+        <div class="section-title">${esc(date)} — anbar qeydləri (${filteredDayEntries.length})</div>
+        <div class="toggle-row">
+          <button class="toggle-btn ${state.goodsTypeFilter === "all" ? "active-ink" : ""}" data-goods-filter-type="all">Hamısı</button>
+          <button class="toggle-btn ${state.goodsTypeFilter === "Pasos" ? "active-ink" : ""}" data-goods-filter-type="Pasos">Pasos</button>
+          <button class="toggle-btn ${state.goodsTypeFilter === "Əl fındığı" ? "active-ink" : ""}" data-goods-filter-type="Əl fındığı">Əl fındığı</button>
+          <button class="toggle-btn ${state.goodsTypeFilter === "Digər" ? "active-ink" : ""}" data-goods-filter-type="Digər">Digər</button>
+        </div>
         ${
-          dayEntries.length === 0
+          filteredDayEntries.length === 0
             ? '<div class="empty">Bu tarixdə qeyd yoxdur</div>'
             : `<div style="overflow-x:auto; border:1px solid var(--line-soft); border-radius:10px;">
                 <table style="border-collapse:collapse; width:100%; font-size:12.5px;">
@@ -1992,29 +1999,14 @@
                     <th style="padding:7px 10px;text-align:left;border-bottom:1.5px solid var(--line);color:var(--muted);font-weight:600;">Gətirən</th>
                     <th style="padding:7px 10px;text-align:left;border-bottom:1.5px solid var(--line);color:var(--muted);font-weight:600;">Növ</th>
                     <th style="padding:7px 10px;text-align:right;border-bottom:1.5px solid var(--line);color:var(--muted);font-weight:600;">Kq</th>
-                    <th style="padding:7px 10px;text-align:right;border-bottom:1.5px solid var(--line);color:var(--muted);font-weight:600;">2-ci çəki</th>
-                    <th style="padding:7px 10px;text-align:center;border-bottom:1.5px solid var(--line);color:var(--muted);font-weight:600;">Pul</th>
                     <th style="padding:7px 10px;border-bottom:1.5px solid var(--line);"></th>
                   </tr></thead>
                   <tbody>
-                    ${sortByTs(dayEntries).reverse().map((g) => `
+                    ${sortByTs(filteredDayEntries).reverse().map((g) => `
                       <tr>
                         <td style="padding:7px 10px;border-bottom:1px solid var(--line-soft);font-weight:600;color:var(--ink);">${esc(g.gətirən)}${g.source === "purchase" ? ' <span style="font-weight:500;color:var(--muted);font-size:11px;">(Alışlar)</span>' : ""}</td>
                         <td style="padding:7px 10px;border-bottom:1px solid var(--line-soft);">${esc(g.type)}</td>
                         <td style="padding:7px 10px;text-align:right;border-bottom:1px solid var(--line-soft);">${fmt(g.kg)}</td>
-                        <td style="padding:7px 10px;text-align:right;border-bottom:1px solid var(--line-soft);">
-                          ${
-                            g.kg2
-                              ? `<span style="font-weight:700;color:${Math.abs(g.kg2 - g.kg) > 0.5 ? "var(--red)" : "var(--green)"};">${fmt(g.kg2)}</span>`
-                              : g.source === "goods"
-                              ? `<input class="secondWeighInput" data-row-id="${g.id}" type="number" inputmode="decimal" placeholder="+ çəki" style="width:70px;padding:4px 6px;font-size:12px;border:1.5px solid var(--line);border-radius:6px;" />
-                                 <button class="btn-outline" style="width:auto;padding:4px 8px;font-size:11px;margin-left:4px;" data-add-kg2="${g.id}">✓</button>`
-                              : "—"
-                          }
-                        </td>
-                        <td style="padding:7px 10px;text-align:center;border-bottom:1px solid var(--line-soft);">
-                          <button class="btn-outline" style="width:auto;padding:4px 8px;font-size:11px;${g.paid ? "border-color:var(--green);color:var(--green);background:var(--green-bg);" : ""}" data-toggle-paid="${g.id}" data-toggle-paid-source="${g.source}">${g.paid ? "✓" : "✕"}</button>
-                        </td>
                         <td style="padding:7px 10px;text-align:right;border-bottom:1px solid var(--line-soft);">
                           ${g.source === "goods" ? `<button class="del-btn" data-del-goods="${g.id}">${ICONS.trash}</button>` : ""}
                         </td>
@@ -2624,22 +2616,8 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     document.querySelectorAll("[data-del-goods]").forEach((btn) => {
       btn.onclick = () => deleteGoodsIntake(btn.dataset.delGoods);
     });
-    document.querySelectorAll("[data-add-kg2]").forEach((btn) => {
-      btn.onclick = async () => {
-        const id = btn.dataset.addKg2;
-        const input = document.querySelector(`.secondWeighInput[data-row-id="${id}"]`);
-        const kg2 = Number(input.value);
-        if (!kg2) return;
-        await addSecondWeighing(id, kg2);
-      };
-    });
-    document.querySelectorAll("[data-toggle-paid]").forEach((btn) => {
-      btn.onclick = () => {
-        const id = btn.dataset.togglePaid;
-        const source = btn.dataset.togglePaidSource;
-        if (source === "goods") toggleGoodsPaid(id);
-        else togglePurchaseWarehousePaid(id);
-      };
+    document.querySelectorAll("[data-goods-filter-type]").forEach((btn) => {
+      btn.onclick = () => { state.goodsTypeFilter = btn.dataset.goodsFilterType; renderTabContent(); };
     });
   }
 
