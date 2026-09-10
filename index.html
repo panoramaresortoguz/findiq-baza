@@ -291,6 +291,7 @@
     goodsIntakeMonth: todayISO().slice(0, 7),
     goodsDate: todayISO(),
     goodsTypeFilter: "all",
+    waReminderOn: false,
     kassaDate: todayISO(),
     purchasesDate: todayISO(),
     purchasesTypeFilter: "all",
@@ -1251,6 +1252,11 @@
               </div>`
         }
       </div>
+      <div class="section">
+        <div class="section-title">WhatsApp xatırlatması</div>
+        <div style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">Sayt açıq qaldığı müddətdə hər 3 saatdan bir Mədaxil/Kassadan çıxan/Qalıq ilə WhatsApp avtomatik açılacaq — sadəcə "Göndər" düyməsini basmaq qalacaq. Səhifə bağlansa dayanır.</div>
+        <button class="btn-outline" id="waReminderToggle" style="${state.waReminderOn ? "border-color:var(--green);color:var(--green);background:var(--green-bg);" : ""}">${state.waReminderOn ? "✓ Aktivdir (3 saatdan bir)" : "Aktiv et"}</button>
+      </div>
     `;
   }
 
@@ -2175,6 +2181,34 @@
     return { purchases, sales, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalPurchaseSum, totalSalesKg, totalSalesSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags, driverAdvancesDay, goodsIntakeDay, driverSummaries, fuelDay, fuelByTractorist, fuelTotalLiters, cashBreakdown, dayBalance };
   }
 
+  // A short, WhatsApp-friendly cash snapshot: just the three numbers requested —
+  // today's income, outgoing, and remaining balance.
+  function buildShortCashReport() {
+    const r = buildReportData(todayISO());
+    const now = new Date();
+    const timeStr = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
+    return `💵 Kassa hesabatı (${todayISO()} · ${timeStr})
+
+Mədaxil: +${fmt(r.cashIn)}
+Kassadan çıxan: −${fmt(r.cashOut)}
+Qalıq: ${fmt(r.dayBalance)}`;
+  }
+
+  // While the tab stays open, this opens a WhatsApp compose window with the cash snapshot
+  // every 3 hours — WhatsApp itself won't let a website send without a human tapping Send,
+  // so this is as automatic as a static site can get.
+  let waReminderTimer = null;
+  function startWaReminder() {
+    if (waReminderTimer) return;
+    waReminderTimer = setInterval(() => {
+      const text = buildShortCashReport();
+      window.open("https://wa.me/?text=" + encodeURIComponent(text), "_blank");
+    }, 3 * 60 * 60 * 1000);
+  }
+  function stopWaReminder() {
+    if (waReminderTimer) { clearInterval(waReminderTimer); waReminderTimer = null; }
+  }
+
   function buildReportText(reportDate) {
     const r = buildReportData(reportDate);
 
@@ -2462,6 +2496,11 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     document.querySelectorAll("[data-del-cash]").forEach((btn) => {
       btn.onclick = () => deleteCashLog(btn.dataset.delCash);
     });
+    document.getElementById("waReminderToggle").onclick = () => {
+      state.waReminderOn = !state.waReminderOn;
+      if (state.waReminderOn) startWaReminder(); else stopWaReminder();
+      renderTabContent();
+    };
   }
 
   function wirePurchases() {
