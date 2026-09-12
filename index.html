@@ -2190,19 +2190,17 @@
       purchasesByType[t].sum += purchasePaid(p);
     });
 
-    // "Bugün gələn fındıq" — nuts brought in directly (not via Alışlar), grouped by type.
-    const goodsByType = {};
-    goodsIntakeDay.forEach((g) => {
-      const t = g.type || "Digər";
-      if (!goodsByType[t]) goodsByType[t] = { reys: 0, carriers: new Set(), kgStated: 0, kg: 0, paid: 0 };
-      goodsByType[t].reys += 1;
-      if (g.gətirən) goodsByType[t].carriers.add(g.gətirən);
-      goodsByType[t].kgStated += g.kgStated || 0;
-      goodsByType[t].kg += g.kg || 0;
-      goodsByType[t].paid += g.paidAmount || 0;
+    // "Bugün gələn fındıq" — one line per delivery, with its own trip number ("reys") that
+    // counts up independently for each person+type combination (so a new carrier always
+    // starts back at "1-ci reys", regardless of how many trips others made).
+    const reysCounters = {};
+    const goodsLines = sortByTs(goodsIntakeDay).map((g) => {
+      const key = (g.gətirən || "") + "|" + (g.type || "");
+      reysCounters[key] = (reysCounters[key] || 0) + 1;
+      return { ...g, reysNo: reysCounters[key] };
     });
 
-    return { purchases, sales, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalPurchaseSum, totalSalesKg, totalSalesSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags, driverAdvancesDay, goodsIntakeDay, driverSummaries, fuelDay, fuelByTractorist, fuelTotalLiters, cashBreakdown, dayBalance, purchasesByType, goodsByType };
+    return { purchases, sales, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalPurchaseSum, totalSalesKg, totalSalesSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags, driverAdvancesDay, goodsIntakeDay, goodsLines, driverSummaries, fuelDay, fuelByTractorist, fuelTotalLiters, cashBreakdown, dayBalance, purchasesByType };
   }
 
   // A short, WhatsApp-friendly cash snapshot: just the three numbers requested —
@@ -2249,14 +2247,10 @@ ${
     : "qeyd yoxdur"
 }`;
 
-    const goodsTypesOrdered = [...NUT_TYPES, ...Object.keys(r.goodsByType).filter((t) => !NUT_TYPES.includes(t))].filter((t) => r.goodsByType[t]);
     const gelenFindiqBlock = `3️⃣ Bugün gələn fındıq:
 ${
-  goodsTypesOrdered.length
-    ? goodsTypesOrdered.map((t) => {
-        const g = r.goodsByType[t];
-        return `• ${t} — ${g.reys} reys — Kim gətirib: ${Array.from(g.carriers).join(", ") || "—"} — deyilən: ${fmt(g.kgStated)} kq — çəkilənnən sonra: ${fmt(g.kg)} kq — ödənilən: ${fmt(g.paid)} manat`;
-      }).join("\n")
+  r.goodsLines.length
+    ? r.goodsLines.map((g) => `• ${g.gətirən || "—"} - ${g.type || "Digər"} - ${g.reysNo}-ci reys - deyilən çəki: ${fmt(g.kgStated || 0)} kq, çəkilənnən sonra: ${fmt(g.kg || 0)} kq`).join("\n")
     : "qeyd yoxdur"
 }`;
 
