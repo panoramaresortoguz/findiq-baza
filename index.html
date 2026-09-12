@@ -945,6 +945,11 @@
   async function deleteGoodsIntake(id) {
     await deleteDoc("goodsIntake", id);
   }
+  // "Ödənilən məbləğ" is often only known in the evening, well after the intake was
+  // recorded — this lets it be filled in or corrected later on the same record.
+  async function updateGoodsPaidAmount(id, amount) {
+    await updateDoc("goodsIntake", id, { paidAmount: amount });
+  }
   // Goods leaving the warehouse (loaded onto a truck) — automatically subtracted from the
   // running warehouse stock, same way a purchase/intake adds to it. No cash effect.
   async function addWarehouseOut(w) {
@@ -2309,12 +2314,18 @@ ${gelenFindiqBlock}`;
                 r.goodsIntakeDay.length === 0
                   ? '<div class="empty">Bu tarixdə qeyd yoxdur</div>'
                   : sortByTs(r.goodsIntakeDay).reverse().map((g) => `
-                    <div class="list-row">
-                      <div>
-                        <div class="title">${esc(g.gətirən)} · ${esc(g.type)}</div>
-                        <div class="meta">${esc(g.date)}${g.time ? " · " + esc(g.time) : ""} · deyilən ${fmt(g.kgStated || 0)} kq · çəkilən ${fmt(g.kg || 0)} kq${g.paidAmount ? ` · ödənilən ${fmt(g.paidAmount)}` : ""}</div>
+                    <div class="card-box">
+                      <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                        <div>
+                          <div style="font-weight:700;color:var(--ink);">${esc(g.gətirən)} · ${esc(g.type)}</div>
+                          <div style="font-size:12px;color:var(--muted);margin-top:2px;">${esc(g.date)}${g.time ? " · " + esc(g.time) : ""} · deyilən ${fmt(g.kgStated || 0)} kq · çəkilən ${fmt(g.kg || 0)} kq</div>
+                        </div>
+                        <button class="del-btn" data-del-gf="${g.id}">${ICONS.trash}</button>
                       </div>
-                      <button class="del-btn" data-del-gf="${g.id}">${ICONS.trash}</button>
+                      <div class="field-row" style="margin-top:10px;">
+                        <div class="field"><label>Ödənilən məbləğ</label><input class="gfPaidInput" data-row-id="${g.id}" type="number" inputmode="decimal" value="${g.paidAmount || ""}" placeholder="0" /></div>
+                        <button class="btn-outline" style="width:auto;padding:9px 16px;flex-shrink:0;align-self:flex-end;" data-save-gf-paid="${g.id}">Yadda saxla</button>
+                      </div>
                     </div>`).join("")
               }
             </div>`
@@ -2860,6 +2871,14 @@ ${gelenFindiqBlock}`;
       };
       document.querySelectorAll("[data-del-gf]").forEach((btn) => {
         btn.onclick = () => deleteGoodsIntake(btn.dataset.delGf);
+      });
+      document.querySelectorAll("[data-save-gf-paid]").forEach((btn) => {
+        btn.onclick = () => {
+          const id = btn.dataset.saveGfPaid;
+          const input = document.querySelector(`.gfPaidInput[data-row-id="${id}"]`);
+          const amount = Number(input.value) || 0;
+          updateGoodsPaidAmount(id, amount);
+        };
       });
     }
 
