@@ -362,7 +362,6 @@
     { id: "attendance", label: "Davamiyyət", icon: "calendar", ownerOnly: true },
     { id: "truck", label: "Nəqliyyat", icon: "truck", ownerOnly: true },
     { id: "drivers", label: "Sürücülər", icon: "driver", ownerOnly: true },
-    { id: "goods", label: "Skladda olan məhsullar", icon: "scale", ownerOnly: true },
   ];
 
   // ---------- Firestore live sync ----------
@@ -1173,7 +1172,6 @@
     else if (state.tab === "attendance" && isOwner()) el.innerHTML = renderAttendanceTab();
     else if (state.tab === "truck" && isOwner()) el.innerHTML = renderTruckTab();
     else if (state.tab === "drivers" && isOwner()) el.innerHTML = renderDriversTab();
-    else if (state.tab === "goods" && isOwner()) el.innerHTML = renderGoodsTab();
     else el.innerHTML = renderReportTab();
     attachTabEvents();
 
@@ -2178,7 +2176,28 @@
     const cashBreakdown = buildCashBreakdown(reportableCashLog);
     const dayBalance = cashLog.reduce((s, c) => s + (c.type === "in" ? c.sum : -c.sum), 0);
 
-    return { purchases, sales, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalPurchaseSum, totalSalesKg, totalSalesSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags, driverAdvancesDay, goodsIntakeDay, driverSummaries, fuelDay, fuelByTractorist, fuelTotalLiters, cashBreakdown, dayBalance };
+    // "Bugün Alınan mallar (Alışlardan)" — purchases grouped by type, kg + actually-paid sum.
+    const purchasesByType = {};
+    purchases.forEach((p) => {
+      const t = p.type || "Digər";
+      if (!purchasesByType[t]) purchasesByType[t] = { kg: 0, sum: 0 };
+      purchasesByType[t].kg += p.kg;
+      purchasesByType[t].sum += purchasePaid(p);
+    });
+
+    // "Bugün gələn fındıq" — nuts brought in directly (not via Alışlar), grouped by type.
+    const goodsByType = {};
+    goodsIntakeDay.forEach((g) => {
+      const t = g.type || "Digər";
+      if (!goodsByType[t]) goodsByType[t] = { reys: 0, carriers: new Set(), kgStated: 0, kg: 0, paid: 0 };
+      goodsByType[t].reys += 1;
+      if (g.gətirən) goodsByType[t].carriers.add(g.gətirən);
+      goodsByType[t].kgStated += g.kgStated || 0;
+      goodsByType[t].kg += g.kg || 0;
+      goodsByType[t].paid += g.paidAmount || 0;
+    });
+
+    return { purchases, sales, expenses, cashLog, debts, attendanceDay, truckDay, totalKg, totalPurchaseSum, totalSalesKg, totalSalesSum, totalExpenses, cashIn, cashOut, truckTotalKg, truckTotalBags, driverAdvancesDay, goodsIntakeDay, driverSummaries, fuelDay, fuelByTractorist, fuelTotalLiters, cashBreakdown, dayBalance, purchasesByType, goodsByType };
   }
 
   // A short, WhatsApp-friendly cash snapshot: just the three numbers requested —
@@ -2212,78 +2231,95 @@ Qalıq: ${fmt(r.dayBalance)}`;
   function buildReportText(reportDate) {
     const r = buildReportData(reportDate);
 
-    const purchaseTypeGroups = {};
-    r.purchases.forEach((p) => {
-      const t = p.type || "Digər";
-      if (!purchaseTypeGroups[t]) purchaseTypeGroups[t] = { kg: 0, sum: 0 };
-      purchaseTypeGroups[t].kg += p.kg;
-      purchaseTypeGroups[t].sum += purchasePaid(p);
-    });
-    const purchaseTypeLines = Object.keys(purchaseTypeGroups).map((t) => {
-      const g = purchaseTypeGroups[t];
-      const avg = g.kg ? g.sum / g.kg : 0;
-      return `• ${t}: ${fmt(g.kg)} kq — ${fmt(g.sum)} manat (orta ${fmt(avg)}/kq)`;
-    });
-    const purchaseAvg = r.totalKg ? r.totalPurchaseSum / r.totalKg : 0;
-
-    const kassaBlock = `💵 Kassa:
+    const kassaBlock = `1️⃣ Bugünün Kassası:
 Mədaxil: +${fmt(r.cashIn)}${Object.entries(r.cashBreakdown.in).map(([src, sum]) => `\n  · ${cashSourceLabel(src, "in")}: +${fmt(sum)}`).join("")}
 Kassadan çıxan: −${fmt(r.cashOut)}${Object.entries(r.cashBreakdown.out).map(([src, sum]) => `\n  · ${cashSourceLabel(src, "out")}: −${fmt(sum)}`).join("")}
-Kassada qalıq (bu gün üçün): ${fmt(r.dayBalance)}`;
+Qalıq: ${fmt(r.dayBalance)}`;
+
+    const purchaseTypesOrdered = [...NUT_TYPES, ...Object.keys(r.purchasesByType).filter((t) => !NUT_TYPES.includes(t))].filter((t) => r.purchasesByType[t]);
+    const mallarBlock = `2️⃣ Bugün Alınan mallar (Alışlardan):
+${
+  purchaseTypesOrdered.length
+    ? purchaseTypesOrdered.map((t) => `• ${t}: ${fmt(r.purchasesByType[t].kg)} kq — ${fmt(r.purchasesByType[t].sum)} manat`).join("\n")
+    : "qeyd yoxdur"
+}`;
+
+    const goodsTypesOrdered = [...NUT_TYPES, ...Object.keys(r.goodsByType).filter((t) => !NUT_TYPES.includes(t))].filter((t) => r.goodsByType[t]);
+    const gelenFindiqBlock = `3️⃣ Bugün gələn fındıq:
+${
+  goodsTypesOrdered.length
+    ? goodsTypesOrdered.map((t) => {
+        const g = r.goodsByType[t];
+        return `• ${t} — ${g.reys} reys — Kim gətirib: ${Array.from(g.carriers).join(", ") || "—"} — deyilən: ${fmt(g.kgStated)} kq — çəkilənnən sonra: ${fmt(g.kg)} kq — ödənilən: ${fmt(g.paid)} manat`;
+      }).join("\n")
+    : "qeyd yoxdur"
+}`;
 
     if (!isOwner()) {
-      // Read-only viewers only see the essentials: purchases, driver advances, and kassa.
+      // Read-only viewers see the same three sections, without the internal cash breakdown lines.
       return `📋 ${reportDate} hesabatı
 
-🌰 Fındıq alışı:
-${purchaseTypeLines.length ? purchaseTypeLines.join("\n") : "qeyd yoxdur"}
-Cəmi: ${fmt(r.totalKg)} kq, məbləğ ${fmt(r.totalPurchaseSum)}${r.totalKg ? ` (orta ${fmt(purchaseAvg)}/kq)` : ""}
+${kassaBlock}
 
-🚗 Sürücülər (avans):
-${r.driverSummaries.length ? r.driverSummaries.map((d) => `• ${d.driver}: avans ${fmt(d.advance)}`).join("\n") : "qeyd yoxdur"}
+${mallarBlock}
 
-${kassaBlock}`;
+${gelenFindiqBlock}`;
     }
 
     return `📋 ${reportDate} hesabatı
 
-👷 Davamiyyət: ${r.attendanceDay.length} nəfər işdə olub
-
-🌰 Fındıq alışı:
-${purchaseTypeLines.length ? purchaseTypeLines.join("\n") : "qeyd yoxdur"}
-Cəmi: ${fmt(r.totalKg)} kq, məbləğ ${fmt(r.totalPurchaseSum)}${r.totalKg ? ` (orta ${fmt(purchaseAvg)}/kq)` : ""}
-
-🛒 Satışlar:
-Cəmi: ${fmt(r.totalSalesKg)} kq, məbləğ ${fmt(r.totalSalesSum)}
-
-🚗 Sürücülər (avans):
-${r.driverSummaries.length ? r.driverSummaries.map((d) => `• ${d.driver}: avans ${fmt(d.advance)}`).join("\n") : "qeyd yoxdur"}
-
-📦 Anbar (Skladda olan məhsullar):
-${r.goodsIntakeDay.length ? r.goodsIntakeDay.map((g) => `• ${g.gətirən}: ${g.kgStated ? `deyilən ${fmt(g.kgStated)} kq → ` : ""}${fmt(g.kg)} kq${g.kg2 ? ` → 2-ci çəki ${fmt(g.kg2)} kq (fərq ${fmt(g.kg2 - g.kg)})` : ""} [${g.type}]${g.kimdenAlib ? ` (${g.kimdenAlib}dan)` : ""}`).join("\n") : "qeyd yoxdur"}
-
 ${kassaBlock}
 
-🧾 Xərclər:
-${r.expenses.length ? r.expenses.map((e) => `• ${e.category}: ${fmt(e.sum)}${e.note ? " (" + e.note + ")" : ""}`).join("\n") : "qeyd yoxdur"}
-Cəmi xərclər: ${fmt(r.totalExpenses)}
+${mallarBlock}
 
-🤝 Borclar (bu gün):
-${r.debts.length ? r.debts.map((d) => `• ${d.person}: ${fmt(d.sum)} — ${d.direction === "gave" ? "bizə borcludur" : "biz borcluyuq"}`).join("\n") : "yeni qeyd yoxdur"}
-
-⛽ Yanacaq:
-${Object.keys(r.fuelByTractorist).length ? Object.entries(r.fuelByTractorist).map(([n, l]) => `• ${n}: ${fmt(l)} litr`).join("\n") : "qeyd yoxdur"}
-${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
+${gelenFindiqBlock}`;
   }
 
+  let gelenFindiqType = NUT_TYPES[0];
   function renderReportTab() {
     const reportText = buildReportText(state.reportDate);
+    const r = buildReportData(state.reportDate);
+    const carrierOptions = Array.from(new Set([...state.drivers.map((d) => d.name), ...state.goodsIntake.map((g) => g.gətirən)])).filter(Boolean)
+      .map((n) => `<option value="${esc(n)}"></option>`).join("");
     return `
       ${!isOwner() ? '<div class="viewer-note">Bu hesabatı yalnız görə bilərsiniz. Dəyişiklik etmək üçün giriş lazımdır.</div>' : ""}
       <div class="section"><div class="section-title">Hesabat tarixi</div>
         <div class="field-row"><div class="field"><input id="reportDate" type="date" value="${esc(state.reportDate)}" /></div></div>
       </div>
       <div class="report-box">${esc(reportText)}</div>
+      ${
+        isOwner()
+          ? `<div class="section">
+              <div class="section-title">Bugün gələn fındıq daxil et</div>
+              <div class="field-row"><div class="field"><label>Kim gətirib</label><input id="gfCarrier" list="gfCarrierList" placeholder="Ad" /></div></div>
+              <datalist id="gfCarrierList">${carrierOptions}</datalist>
+              <div class="toggle-row">
+                ${NUT_TYPES.map((t) => `<button class="toggle-btn ${gelenFindiqType === t ? "active-ink" : ""}" data-gf-type="${esc(t)}">${esc(t)}</button>`).join("")}
+              </div>
+              <div class="field-row">
+                <div class="field"><label>Deyilən çəki (kq)</label><input id="gfStated" type="number" inputmode="decimal" placeholder="0" /></div>
+                <div class="field"><label>Çəkilənnən sonra (kq)</label><input id="gfWeighed" type="number" inputmode="decimal" placeholder="0" /></div>
+              </div>
+              <div class="field-row"><div class="field"><label>Ödənilən məbləğ</label><input id="gfPaid" type="number" inputmode="decimal" placeholder="0" /></div></div>
+              <button class="btn" id="gfSubmit">${ICONS.plus} Qeyd et</button>
+            </div>
+            <div class="section">
+              <div class="section-title">${esc(state.reportDate)} — gələn fındıq qeydləri (${r.goodsIntakeDay.length})</div>
+              ${
+                r.goodsIntakeDay.length === 0
+                  ? '<div class="empty">Bu tarixdə qeyd yoxdur</div>'
+                  : sortByTs(r.goodsIntakeDay).reverse().map((g) => `
+                    <div class="list-row">
+                      <div>
+                        <div class="title">${esc(g.gətirən)} · ${esc(g.type)}</div>
+                        <div class="meta">${esc(g.date)}${g.time ? " · " + esc(g.time) : ""} · deyilən ${fmt(g.kgStated || 0)} kq · çəkilən ${fmt(g.kg || 0)} kq${g.paidAmount ? ` · ödənilən ${fmt(g.paidAmount)}` : ""}</div>
+                      </div>
+                      <button class="del-btn" data-del-gf="${g.id}">${ICONS.trash}</button>
+                    </div>`).join("")
+              }
+            </div>`
+          : ""
+      }
       <div class="field-row" style="margin-bottom:10px;"><button class="btn green" id="reportWhatsapp">${ICONS.send} WhatsApp-a göndər</button></div>
       <div style="margin-bottom:10px;"><button class="btn-outline" id="reportCopy">Mətni kopyala</button></div>
       ${
@@ -2341,9 +2377,9 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     r.driverSummaries.forEach((d) => rows.push([d.driver, d.advance]));
     rows.push([]);
 
-    rows.push(["Mal gətirmə"]);
-    rows.push(["Gətirən", "Kimdən alıb", "Növ", "Deyilən çəki (kq)", "1-ci çəki (kq)", "2-ci çəki (kq)"]);
-    r.goodsIntakeDay.forEach((g) => rows.push([g.gətirən, g.kimdenAlib || "", g.type || "", g.kgStated || "", g.kg, g.kg2 || ""]));
+    rows.push(["Gələn fındıq"]);
+    rows.push(["Gətirən", "Növ", "Deyilən çəki (kq)", "Çəkilənnən sonra (kq)", "Ödənilən məbləğ"]);
+    r.goodsIntakeDay.forEach((g) => rows.push([g.gətirən, g.type || "", g.kgStated || "", g.kg, g.paidAmount || ""]));
     rows.push([]);
 
     rows.push(["Kassa"]);
@@ -2412,8 +2448,8 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     const driverAdvRows = r.driverAdvancesDay.map((a) => ({ Tarix: a.date, Sürücü: a.driver, Məbləğ: a.sum, Qeyd: a.note || "" }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(driverAdvRows.length ? driverAdvRows : [{ Tarix: reportDate, Sürücü: "qeyd yoxdur" }]), "Sürücü avansı");
 
-    const goodsIntakeRows = r.goodsIntakeDay.map((g) => ({ Tarix: g.date, Vaxt: g.time || "", "Kimdən alıb": g.kimdenAlib || "", Növ: g.type || "", "Deyilən çəki (kq)": g.kgStated || "", "1-ci çəki (kq)": g.kg, "2-ci çəki (kq)": g.kg2 || "", "Fərq (kq)": g.kg2 ? Number((g.kg2 - g.kg).toFixed(2)) : "", Gətirən: g.gətirən }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(goodsIntakeRows.length ? goodsIntakeRows : [{ Tarix: reportDate, Gətirən: "qeyd yoxdur" }]), "Mal gətirmə");
+    const goodsIntakeRows = r.goodsIntakeDay.map((g) => ({ Tarix: g.date, Vaxt: g.time || "", Növ: g.type || "", "Deyilən çəki (kq)": g.kgStated || "", "Çəkilənnən sonra (kq)": g.kg, "Ödənilən məbləğ": g.paidAmount || "", Gətirən: g.gətirən }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(goodsIntakeRows.length ? goodsIntakeRows : [{ Tarix: reportDate, Gətirən: "qeyd yoxdur" }]), "Gələn fındıq");
 
     const driverSummaryRows = r.driverSummaries.map((d) => ({ Sürücü: d.driver, Avans: d.advance }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(driverSummaryRows.length ? driverSummaryRows : [{ Sürücü: "qeyd yoxdur" }]), "Sürücü hesabı");
@@ -2457,7 +2493,7 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(truckRowsAll.length ? truckRowsAll : [{ Tarix: "", Sürücü: "qeyd yoxdur" }]), "Maşın");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.driverAdvances.map((a) => ({ Tarix: a.date, Sürücü: a.driver, Məbləğ: a.sum, Qeyd: a.note || "" }))), "Sürücü avansı");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.goodsIntake.map((g) => ({ Tarix: g.date, Vaxt: g.time || "", "Kimdən alıb": g.kimdenAlib || "", Növ: g.type || "", "Deyilən çəki (kq)": g.kgStated || "", "1-ci çəki (kq)": g.kg, "2-ci çəki (kq)": g.kg2 || "", "Fərq (kq)": g.kg2 ? Number((g.kg2 - g.kg).toFixed(2)) : "", Gətirən: g.gətirən }))), "Mal gətirmə");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.goodsIntake.map((g) => ({ Tarix: g.date, Vaxt: g.time || "", Növ: g.type || "", "Deyilən çəki (kq)": g.kgStated || "", "Çəkilənnən sonra (kq)": g.kg, "Ödənilən məbləğ": g.paidAmount || "", Gətirən: g.gətirən }))), "Gələn fındıq");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.fuelLog.map((f) => ({ Tarix: f.date, Vaxt: f.time || "", Traktorist: f.tractorist, Litr: f.liters, Növ: f.type || "", Qeyd: f.note || "" }))), "Yanacaq");
     XLSX.writeFile(wb, `hamisi_${todayISO()}.xlsx`);
   }
@@ -2472,7 +2508,6 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
     else if (state.tab === "attendance") wireAttendance();
     else if (state.tab === "truck") wireTruck();
     else if (state.tab === "drivers") wireDrivers();
-    else if (state.tab === "goods") wireGoods();
     else if (state.tab === "report") wireReport();
   }
 
@@ -2805,6 +2840,29 @@ ${r.fuelDay.length ? `Cəmi: ${fmt(r.fuelTotalLiters)} litr` : ""}`;
 
   function wireReport() {
     document.getElementById("reportDate").onchange = (e) => { state.reportDate = e.target.value; renderTabContent(); };
+
+    const gfTypeButtons = document.querySelectorAll("[data-gf-type]");
+    if (gfTypeButtons.length) {
+      gfTypeButtons.forEach((btn) => {
+        btn.onclick = () => { gelenFindiqType = btn.dataset.gfType; renderTabContent(); };
+      });
+      document.getElementById("gfSubmit").onclick = async () => {
+        const carrier = document.getElementById("gfCarrier").value.trim();
+        const stated = Number(document.getElementById("gfStated").value) || 0;
+        const weighed = Number(document.getElementById("gfWeighed").value) || 0;
+        const paid = Number(document.getElementById("gfPaid").value) || 0;
+        if (!carrier || !weighed) return;
+        await addGoodsIntake({ date: state.reportDate, gətirən: carrier, type: gelenFindiqType, kgStated: stated, kg: weighed, paidAmount: paid });
+        document.getElementById("gfCarrier").value = "";
+        document.getElementById("gfStated").value = "";
+        document.getElementById("gfWeighed").value = "";
+        document.getElementById("gfPaid").value = "";
+      };
+      document.querySelectorAll("[data-del-gf]").forEach((btn) => {
+        btn.onclick = () => deleteGoodsIntake(btn.dataset.delGf);
+      });
+    }
+
     document.getElementById("reportWhatsapp").onclick = () => {
       const text = buildReportText(state.reportDate);
       window.open("https://wa.me/?text=" + encodeURIComponent(text), "_blank");
